@@ -3,6 +3,13 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 include(VERSION.cmake)
+
+set(CMAKE_BUILD_TYPE Debug)
+set( CMAKE_CXX_COMPILER "/usr/bin/g++" )
+set( CMAKE_C_COMPILER "/usr/bin/gcc" )
+
+include_directories(SYSTEM ./src)
+
 project(owncloud-client LANGUAGES CXX C VERSION ${MIRALL_VERSION_MAJOR}.${MIRALL_VERSION_MINOR}.${MIRALL_VERSION_PATCH})
 include(FeatureSummary)
 
@@ -170,3 +177,6 @@ if(ECM_VERSION VERSION_GREATER_EQUAL 5.79)
 else()
     message(WARNING "ECM ${ECM_VERSION} too old, cannot install clang-format git hook")
 endif()
+
+set(Qt6Core_DIR /usr/lib/x86_64-linux-gnu/cmake/Qt6Core)
+find_package(Qt6Core REQUIRED)

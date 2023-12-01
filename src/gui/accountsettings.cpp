@@ -35,6 +35,7 @@
 #include "tooltipupdater.h"
 
 #include "folderwizard/folderwizard.h"
+#include "minio-cpp/include/client.h"
 
 #include <QAction>
 #include <QClipboard>
@@ -185,6 +186,9 @@ AccountSettings::AccountSettings(const AccountStatePtr &accountState, QWidget *p
     slotAccountStateChanged();
 
     connect(ui->addButton, &QPushButton::clicked, this, &AccountSettings::slotAddFolder);
+    connect(ui->refreshRemoteButton, &QPushButton::clicked, this, &AccountSettings::slotRefreshRemoteBuckets);
+
+    ui->refreshRemoteButton->setText(tr("Refresh remote buckets"));
 
     if (_accountState->supportsSpaces()) {
         ui->addButton->setText(tr("Add Space"));
@@ -197,13 +201,14 @@ AccountSettings::AccountSettings(const AccountStatePtr &accountState, QWidget *p
     });
 
     connect(_accountState.get(), &AccountState::isSettingUpChanged, this, [this] {
-        if (_accountState->isSettingUp()) {
-            ui->spinner->startAnimation();
-            ui->stackedWidget->setCurrentWidget(ui->loadingPage);
-        } else {
+        // TODO: remove this?
+//        if (_accountState->isSettingUp()) {
+//            ui->spinner->startAnimation();
+//            ui->stackedWidget->setCurrentWidget(ui->loadingPage);
+//        } else {
             ui->spinner->stopAnimation();
             ui->stackedWidget->setCurrentWidget(ui->folderListPage);
-        }
+        // }
     });
     ui->stackedWidget->setCurrentWidget(ui->folderListPage);
 }
@@ -317,7 +322,7 @@ void AccountSettings::slotCustomContextMenuRequested(const QPoint &pos)
     // Add an action to open the folder on the server in a webbrowser:
 
     if (auto info = _model->infoForIndex(_sortModel->mapToSource(index))) {
-        if (info->_folder->accountState()->account()->capabilities().privateLinkPropertyAvailable()) {
+        // if (info->_folder->accountState()->account()->capabilities().privateLinkPropertyAvailable()) {
             QString path = info->_folder->remotePathTrailingSlash();
             if (classification == FolderStatusModel::SubFolder) {
                 // Only add the path of subfolders, because the remote path is the path of the root folder.
@@ -328,7 +333,7 @@ void AccountSettings::slotCustomContextMenuRequested(const QPoint &pos)
                     Utility::openBrowser(url, nullptr);
                 });
             });
-        }
+        // }
     }
 
     // For sub-folders we're now done.
@@ -432,6 +437,29 @@ void AccountSettings::slotAddFolder()
     });
     folderWizard->open();
     ocApp()->gui()->raiseDialog(folderWizard);
+}
+
+
+void AccountSettings::slotRefreshRemoteBuckets()
+{
+    AccountPtr accountPtr = _accountState->account();
+    auto creds = accountPtr->credentials();
+
+    qCDebug(lcAccountSettings) << "user" << creds->user();
+
+    minio::s3::BaseUrl base_url(accountPtr->url().toString().toStdString());
+    minio::creds::StaticProvider provider(creds->user().toStdString(), creds->password().toStdString());
+
+    minio::s3::Client client(base_url, &provider);
+    minio::s3::ListBucketsResponse resp = client.ListBuckets();
+    if (!resp) {
+        qCDebug(lcAccountSettings) << "unable to do bucket existence check" << resp.Error();
+    }
+
+    for (const auto& bucket : resp.buckets)
+    {
+        qCDebug(lcAccountSettings) << QString::fromStdString(bucket.name);
+    }
 }
 
 
@@ -840,8 +868,8 @@ void AccountSettings::slotAccountStateChanged()
             ui->addButton->setToolTip(tr("Click this button to add a folder to synchronize."));
         }
     } else {
-        ui->_folderList->setItemsExpandable(false);
-        ui->addButton->setEnabled(false);
+        // ui->_folderList->setItemsExpandable(false);
+        // ui->addButton->setEnabled(false);
 
         if (_accountState->supportsSpaces()) {
             ui->addButton->setText(tr("Add Space"));

@@ -29,12 +29,22 @@
 #include <QXmlStreamReader>
 #include <QPainter>
 #include <QPainterPath>
+#include <QObject>
+#include <QRandomGenerator>
+#include <QFile>
 
 #include "creds/httpcredentials.h"
 
 #include "account.h"
 #include "networkjobs.h"
+#include "qstring.h"
+#include "filesystem.h"
 
+#include "minio-cpp/include/client.h"
+#include "syncfileitem.h"
+#include <QStringList>
+#include <QString>
+#include <QList>
 
 using namespace std::chrono_literals;
 
@@ -46,27 +56,187 @@ Q_LOGGING_CATEGORY(lcAvatarJob, "sync.networkjob.avatar", QtInfoMsg)
 Q_LOGGING_CATEGORY(lcMkColJob, "sync.networkjob.mkcol", QtInfoMsg)
 Q_LOGGING_CATEGORY(lcDetermineAuthTypeJob, "sync.networkjob.determineauthtype", QtInfoMsg)
 
-RequestEtagJob::RequestEtagJob(AccountPtr account, const QUrl &rootUrl, const QString &path, QObject *parent)
-    : PropfindJob(account, rootUrl, path, PropfindJob::Depth::Zero, parent)
+Q_LOGGING_CATEGORY(lcMinioJob, "sync.networkjob.,miniojob", QtInfoMsg)
+
+RequestEtagJob::RequestEtagJob(AccountPtr account, const QUrl &rootUrl, const QString &path, QObject *parent) : AbstractNetworkJob(account, rootUrl, path, parent)
 {
-    setProperties({ QByteArrayLiteral("getetag") });
-    connect(this, &PropfindJob::directoryListingIterated, this, [this](const QString &, const QMap<QString, QString> &value) {
-        if (reply()->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt() != 207) {
-            Q_EMIT finishedWithError(reply());
-            return;
-        }
-        _etag = Utility::normalizeEtag(value.value(QStringLiteral("getetag")));
-        // the server returned a 207 but no etag, something is wrong
-        if (!OC_ENSURE_NOT(_etag.isEmpty())) {
-            abort();
-        }
+    QObject::connect(this, &RequestEtagJob::directoryListingIteratedS3, this, [=](const minio::s3::Item &item, const QMap<QString, QString> &properties) {
+        _etag = Utility::normalizeEtag(QString::fromStdString(item.etag));
     });
+}
+
+/**
+ *  This method tries to get .datetime-modified object/file from the root of the
+ *  bucket. If file .datetime-modified does not exists it gets created.
+ *
+ *  This is a little hack since we cannot get etag from bucket which would
+ *  tells us if bucket was modified or not, so we could update contents
+ *  based on that.
+ */
+std::string RequestEtagJob::getRootDatetimeModified(const std::string &bucket)
+{
+    std::string datetimeModified = "";
+    qCDebug(lcEtagJob) << "trying to get .datetime-modified from bucket" << bucket.c_str();
+
+    auto creds = _account->credentials();
+
+    qCDebug(lcEtagJob) << "user" << creds->user();
+
+    minio::s3::BaseUrl base_url(_account->url().toString().toStdString());
+    minio::creds::StaticProvider provider(creds->user().toStdString(), creds->password().toStdString());
+    minio::s3::Client client(base_url, &provider);
+
+    // checking if object .datetime-modified exists
+    minio::s3::StatObjectArgs statArgs;
+    statArgs.bucket = bucket;
+    statArgs.object = ".datetime-modified";
+
+    auto rg = QRandomGenerator::global();
+    const QString tmpFileName = QStringLiteral("%1.~%2").arg(QStringLiteral(".datetime-modified"), QString::number(uint(rg->generate() % 0xFFFFFFFF), 16));
+
+    minio::s3::StatObjectResponse statResponse = client.StatObject(statArgs);
+    if (!statResponse) {
+        qCDebug(lcEtagJob) << "unable to get stat object .datetime-modified in bucket " << bucket.c_str() << statResponse.Error().String().c_str();
+        qCDebug(lcEtagJob) << "creating new .datetime-modified";
+
+        QFile tmpFile;
+        tmpFile.setFileName(tmpFileName);
+        if (!tmpFile.open(QIODevice::Append | QIODevice::Unbuffered)) {
+            qCWarning(lcEtagJob) << "could not open temporary file" << tmpFile.fileName();
+            return NULL;
+        }
+
+        const QString now = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
+        const char *charNow = now.toLocal8Bit().constData();
+
+        tmpFile.write(charNow);
+
+        FileSystem::setFileHidden(tmpFile.fileName(), true);
+
+        minio::s3::UploadObjectArgs uploadArgs;
+        uploadArgs.bucket = bucket;
+        uploadArgs.object = ".datetime-modified";
+        uploadArgs.filename = tmpFileName.toStdString();
+
+        minio::s3::UploadObjectResponse uploadResponse = client.UploadObject(uploadArgs);
+        if (uploadResponse) {
+            qCDebug(lcEtagJob) << uploadArgs.filename.c_str() << "is successfully uploaded to" << uploadArgs.object.c_str();
+        } else {
+            qCDebug(lcEtagJob) << "unable to upload file" << uploadArgs.filename.c_str() << "to" << uploadArgs.object.c_str();
+        }
+
+        tmpFile.remove();
+
+        return NULL;
+    }
+
+    minio::s3::DownloadObjectArgs downloadArgs;
+    downloadArgs.bucket = bucket;
+    downloadArgs.object = ".datetime-modified";
+    downloadArgs.filename = tmpFileName.toStdString();
+
+    minio::s3::DownloadObjectResponse downloadResponse = client.DownloadObject(downloadArgs);
+    if (downloadResponse) {
+        qCDebug(lcEtagJob) << downloadArgs.object.c_str() << "is successfully downloaded to" << downloadArgs.filename.c_str();
+    } else {
+        qCDebug(lcEtagJob) << "unable to download object" << downloadArgs.object.c_str() << "to" << downloadArgs.filename.c_str();
+
+        return NULL;
+    }
+
+    QFile tmpFile;
+    tmpFile.setFileName(tmpFileName);
+    if (!tmpFile.open(QIODevice::ReadOnly | QIODevice::Unbuffered)) {
+        qCWarning(lcEtagJob) << "could not open temporary file" << tmpFile.fileName();
+        return NULL;
+    }
+    datetimeModified = tmpFile.readAll().toStdString();
+
+    tmpFile.close();
+
+    return datetimeModified;
+}
+
+void RequestEtagJob::start() {
+    /*
+     * if path == "/" -> list buckets
+     * else list objects based on path
+     */
+    qCDebug(lcEtagJob) << "will try to get etags from path" << path();
+
+    QList<QString> bucketList;
+    QStringList folders;
+
+    auto creds = _account->credentials();
+
+    qCDebug(lcEtagJob) << "user" << creds->user();
+
+    minio::s3::BaseUrl base_url(_account->url().toString().toStdString());
+    minio::creds::StaticProvider provider(creds->user().toStdString(), creds->password().toStdString());
+    minio::s3::Client client(base_url, &provider);
+
+    if (path() == QStringLiteral("/") || path() == QStringLiteral("")) {
+        qCWarning(lcEtagJob) << "probably we should not be here";
+        qCWarning(lcEtagJob) << "we are trying to get etag from path " << path();
+
+        return;
+    }
+
+    std::string bucket;
+    std::string prefix;
+    const QStringList __path = path().split(QStringLiteral("/"));
+    if (__path.size() >= 1) {
+        bucket = __path[1].toStdString();
+    }
+
+    qCDebug(lcEtagJob) << "first element" << __path[1];
+    qCDebug(lcEtagJob) << "path size" << __path.size();
+
+    if (__path.size() > 2) {
+        prefix = std::regex_replace(prefix, std::regex(bucket), "");
+    }
+
+    qCDebug(lcEtagJob) << "prefix" << QString::fromStdString(prefix);
+
+    QMap<QString, QString> currentHttp200Properties;
+    minio::s3::Item item;
+
+    if (prefix.empty()) {
+        // we are tricky here, see getRootDatetimeModified method description
+        item.etag = RequestEtagJob::getRootDatetimeModified(bucket);
+
+        emit RequestEtagJob::directoryListingIteratedS3(item, currentHttp200Properties);
+        emit RequestEtagJob::finishedSignal({});
+
+        return;
+    }
+
+    minio::s3::StatObjectArgs statArgs;
+    statArgs.bucket = bucket;
+    statArgs.object = prefix;
+
+    minio::s3::StatObjectResponse statResponse = client.StatObject(statArgs);
+    if (statResponse) {
+        item.etag = statResponse.etag;
+    } else {
+        qCWarning(lcEtagJob) << "could not get stat for object in bucket" << QString::fromStdString(bucket) << "with prefix" << QString::fromStdString(prefix);
+        return;
+    }
+
+    emit RequestEtagJob::directoryListingIteratedS3(item, currentHttp200Properties);
+    emit RequestEtagJob::finishedSignal({});
 }
 
 const QString &RequestEtagJob::etag() const
 {
     return _etag;
 }
+
+void RequestEtagJob::finished()
+{
+    qCInfo(lcEtagJob) << "RequestEtagJob finished";
+}
+
 /*********************************************************************************************/
 
 MkColJob::MkColJob(AccountPtr account, const QUrl &url, const QString &path,
@@ -244,6 +414,12 @@ PropfindJob::PropfindJob(AccountPtr account, const QUrl &url, const QString &pat
     setPriority(QNetworkRequest::HighPriority);
 }
 
+MinioJob::MinioJob(AccountPtr account, const QUrl &url, const QString &path, Depth depth, QObject *parent)
+    : AbstractNetworkJob(account, url, path, parent)
+    , _depth(depth)
+{
+}
+
 void PropfindJob::setProperties(const QList<QByteArray> &properties)
 {
     _properties = properties;
@@ -288,6 +464,107 @@ void PropfindJob::start()
     buf->open(QIODevice::ReadOnly);
     sendRequest(QByteArrayLiteral("PROPFIND"), req, buf);
     AbstractNetworkJob::start();
+}
+
+void MinioJob::start()
+{
+    /*
+     * if path == "/" -> list buckets
+     * else list objects based on path
+     */
+    std::cout << "doing path " << path().toStdString() << std::endl;
+
+    QList<QString> bucketList;
+    QStringList folders;
+
+    auto creds = _account->credentials();
+
+    qCDebug(lcEtagJob) << "user" << creds->user();
+
+    minio::s3::BaseUrl base_url(_account->url().toString().toStdString());
+    minio::creds::StaticProvider provider(creds->user().toStdString(), creds->password().toStdString());
+    minio::s3::Client client(base_url, &provider);
+
+    if (path() == QStringLiteral("/") || path() == QStringLiteral("")) {
+        minio::s3::ListBucketsResponse resp = client.ListBuckets();
+        if (!resp) {
+            // todo: show error
+            qCWarning(lcEtagJob) << "unable to do bucket existence check" << resp.Error();
+        }
+
+        for (const auto &bucket : resp.buckets) {
+            folders.append(QString::fromUtf8(bucket.name.c_str()));
+        }
+
+        emit directoryListingSubfolders(folders);
+
+        return;
+    }
+
+    std::string bucket;
+    std::string prefix;
+    const QStringList __path = path().split(QStringLiteral("/"));
+    if (__path.size() >= 1) {
+        bucket = __path[1].toStdString();
+    }
+
+    qCDebug(lcEtagJob) << "first element" << __path[1];
+    qCDebug(lcEtagJob) << "path size" << __path.size();
+
+    if (__path.size() > 2) {
+        prefix = std::regex_replace(prefix, std::regex(bucket), "");
+    }
+
+    minio::s3::ListObjectsArgs args;
+    args.bucket = bucket;
+    args.prefix = prefix;
+    args.recursive = false;
+    args.max_keys = 1000000; // todo Rok Jaklic hard limit for now
+
+    minio::s3::ListObjectsResult result = client.ListObjects(args);
+    for (; result; result++) {
+        minio::s3::Item item = *result;
+        if (item) {
+            qCDebug(lcEtagJob) << "Name: " << QString::fromStdString(item.name);
+            qCDebug(lcEtagJob) << "Version ID: " << QString::fromStdString(item.version_id);
+            qCDebug(lcEtagJob) << "ETag: " << QString::fromStdString(item.etag);
+            qCDebug(lcEtagJob) << "Size: " << item.size;
+            qCDebug(lcEtagJob) << "Last Modified: " << item.last_modified.ToUTC();
+            qCDebug(lcEtagJob) << "Delete Marker: "
+                               << minio::utils::BoolToString(item.is_delete_marker);
+
+            qCDebug(lcEtagJob) << "User Metadata: ";
+            for (auto &[key, value] : item.user_metadata) {
+                qCDebug(lcEtagJob) << "  " << QString::fromStdString(key) << ": " << QString::fromStdString(value);
+            }
+            qCDebug(lcEtagJob) << "Owner ID: " << QString::fromStdString(item.owner_id);
+            qCDebug(lcEtagJob) << "Owner Name: " << QString::fromStdString(item.owner_name);
+            qCDebug(lcEtagJob) << "Storage Class: " << QString::fromStdString(item.storage_class);
+            qCDebug(lcEtagJob) << "Is Latest: " << minio::utils::BoolToString(item.is_latest);
+            qCDebug(lcEtagJob) << "Is Prefix: " << minio::utils::BoolToString(item.is_prefix);
+            qCDebug(lcEtagJob) << "---";
+
+            if (item.is_prefix && item.size == 0)  {
+                QString fullPath = QStringLiteral("/") + QString::fromStdString(bucket) + QStringLiteral("/") + QString::fromStdString(prefix) + QString::fromUtf8(item.name.c_str());
+                folders.append(fullPath);
+            }
+
+            QMap<QString, QString> currentHttp200Properties;
+            emit directoryListingIteratedS3(item, currentHttp200Properties);
+        } else {
+            qCWarning(lcEtagJob) << "unable to listobjects " << item.Error();
+            break;
+        }
+    }
+
+    for (const auto& i : folders)
+    {
+        qCDebug(lcEtagJob) << "folder " << i;
+        // emit directoryListingIterated(i, currentHttp200Properties);
+    }    
+
+    emit directoryListingSubfolders(folders);
+    emit finishedWithoutError();
 }
 
 // TODO: Instead of doing all in this slot, we should iteratively parse in readyRead(). This
@@ -336,11 +613,19 @@ void PropfindJob::finished()
     }
 }
 
+void MinioJob::finished()
+{
+}
+
 const QHash<QString, qint64> &PropfindJob::sizes() const
 {
     return _sizes;
 }
 
+const QHash<QString, qint64> &MinioJob::sizes() const
+{
+    return _sizes;
+}
 /*********************************************************************************************/
 
 AvatarJob::AvatarJob(AccountPtr account, const QString &userId, int size, QObject *parent)

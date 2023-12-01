@@ -60,6 +60,7 @@ public:
     bool stillValid(QNetworkReply *reply) override;
     void persist() override;
     QString user() const override;
+    QString password() const override;
     void invalidateToken() override;
     void forgetSensitiveData() override;
     QString fetchUser();

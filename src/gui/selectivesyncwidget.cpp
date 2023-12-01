@@ -27,6 +27,7 @@
 #include <QSettings>
 #include <QTreeWidget>
 #include <QVBoxLayout>
+#include <iostream>
 
 namespace OCC {
 
@@ -102,14 +103,16 @@ QSize SelectiveSyncWidget::sizeHint() const
 
 void SelectiveSyncWidget::refreshFolders()
 {
-    auto *job = new PropfindJob(_account, davUrl(), _folderPath, PropfindJob::Depth::One, this);
-    job->setProperties({QByteArrayLiteral("resourcetype"), QByteArrayLiteral("http://owncloud.org/ns:size")});
-    connect(job, &PropfindJob::directoryListingSubfolders, this, &SelectiveSyncWidget::slotUpdateDirectories);
-    connect(job, &PropfindJob::finishedWithError, this, &SelectiveSyncWidget::slotLscolFinishedWithError);
-    job->start();
     _folderTree->clear();
     _loading->show();
     _loading->move(10, _folderTree->header()->height() + 10);
+
+    auto *job = new MinioJob(_account, davUrl(), _folderPath, MinioJob::Depth::One, this);
+    connect(job, &MinioJob::directoryListingSubfolders, this, &SelectiveSyncWidget::slotUpdateDirectories);
+    job->start();
+
+    // todo: implement ROK ROK
+    // connect(job, &PropfindJob::finishedWithError, this, &SelectiveSyncWidget::slotLscolFinishedWithError);
 }
 
 void SelectiveSyncWidget::setFolderInfo(const QString &folderPath, const QString &rootName, const QSet<QString> &oldBlackList)
@@ -173,13 +176,15 @@ void SelectiveSyncWidget::recursiveInsert(QTreeWidgetItem *parent, QStringList p
 
 void SelectiveSyncWidget::slotUpdateDirectories(QStringList list)
 {
-    auto job = qobject_cast<PropfindJob *>(sender());
+    auto job = qobject_cast<MinioJob *>(sender());
     QScopedValueRollback<bool> isInserting(_inserting, true);
 
     SelectiveSyncTreeViewItem *root = static_cast<SelectiveSyncTreeViewItem *>(_folderTree->topLevelItem(0));
 
     const QString rootPath = Utility::ensureTrailingSlash(Utility::concatUrlPath(davUrl(), _folderPath).path());
 
+    std::cout << "size before erase " << list.size() << std::endl;
+    std::cout << "rootPath " << rootPath.toStdString() << std::endl;
     // Check for excludes.
     list.erase(std::remove_if(list.begin(), list.end(),
                    [&rootPath, this](const QString &it) {
@@ -187,6 +192,12 @@ void SelectiveSyncWidget::slotUpdateDirectories(QStringList list)
                    }),
         list.end());
 
+    std::cout << "size after erase " << list.size() << std::endl;
+
+    for (const auto& i : list)
+    {
+        std::cout << i.toStdString() << std::endl;
+    }
 
     QStringList relativeList;
     relativeList.reserve(list.size());
@@ -247,6 +258,8 @@ void SelectiveSyncWidget::slotUpdateDirectories(QStringList list)
         }
     }
 
+    std::cout << root->childCount() << std::endl;
+
     root->setExpanded(true);
 }
 
@@ -262,14 +275,19 @@ void SelectiveSyncWidget::slotLscolFinishedWithError(QNetworkReply *r)
 
 void SelectiveSyncWidget::slotItemExpanded(QTreeWidgetItem *item)
 {
+    std::cout << item->childCount() << std::endl;
     QString dir = item->data(0, Qt::UserRole).toString();
     if (dir.isEmpty()) {
         return;
     }
-    PropfindJob *job = new PropfindJob(_account, davUrl(), Utility::concatUrlPathItems({_folderPath, dir}), PropfindJob::Depth::One, this);
-    job->setProperties({QByteArrayLiteral("resourcetype"), QByteArrayLiteral("http://owncloud.org/ns:size")});
-    connect(job, &PropfindJob::directoryListingSubfolders, this, &SelectiveSyncWidget::slotUpdateDirectories);
+
+    auto *job = new MinioJob(_account, davUrl(), Utility::concatUrlPathItems({_folderPath, dir}), MinioJob::Depth::One, this);
+    connect(job, &MinioJob::directoryListingSubfolders, this, &SelectiveSyncWidget::slotUpdateDirectories);
     job->start();
+
+    // PropfindJob *job = new PropfindJob(_account, davUrl(), Utility::concatUrlPathItems({_folderPath, dir}), PropfindJob::Depth::One, this);
+    // job->setProperties({QByteArrayLiteral("resourcetype"), QByteArrayLiteral("http://owncloud.org/ns:size")});
+    // connect(job, &PropfindJob::directoryListingSubfolders, this, &SelectiveSyncWidget::slotUpdateDirectories);
 }
 
 void SelectiveSyncWidget::slotItemChanged(QTreeWidgetItem *item, int col)

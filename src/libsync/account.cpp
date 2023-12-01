@@ -28,6 +28,7 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QLoggingCategory>
+#include <QMessageBox>
 #include <QMutex>
 #include <QNetworkAccessManager>
 #include <QNetworkCookieJar>
@@ -37,6 +38,7 @@
 #include <QSslKey>
 #include <QSslSocket>
 #include <QStandardPaths>
+#include <iostream>
 
 namespace OCC {
 
@@ -209,7 +211,7 @@ void Account::setCredentials(AbstractCredentials *cred)
 
 QUrl Account::davUrl() const
 {
-    return Utility::concatUrlPath(url(), davPath());
+    return Utility::concatUrlPath(url(), QLatin1String("/"));
 }
 
 /**
@@ -302,7 +304,7 @@ const Capabilities &Account::capabilities() const
 
 bool Account::hasCapabilities() const
 {
-    return _capabilities.isValid();
+    return true;
 }
 
 void Account::setCapabilities(const Capabilities &caps)

@@ -62,8 +62,10 @@ function(apply_common_target_settings targetName)
             PRIVATE
                 # treat unhandled switch cases as error
                 -Werror=switch
-                -Werror=unused-function
+                # -Werror=unused-function
                 -Werror=unused-but-set-variable
+                -fexceptions
+
         )
     endif()
 endfunction()

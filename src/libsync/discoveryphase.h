@@ -20,6 +20,7 @@
 #include <csync.h>
 #include <QMap>
 #include <QSet>
+#include "minio-cpp/include/response.h"
 #include "networkjobs.h"
 #include <QMutex>
 #include <QWaitCondition>
@@ -129,6 +130,7 @@ signals:
 
 private slots:
     void directoryListingIteratedSlot(const QString &, const QMap<QString, QString> &);
+    void directoryListingIteratedSlotS3(const minio::s3::Item &, const QMap<QString, QString> &);
     void lsJobFinishedWithoutErrorSlot();
     void lsJobFinishedWithErrorSlot(QNetworkReply *);
 
@@ -148,6 +150,7 @@ private:
     // If set, the discovery will finish with an error
     QString _error;
     QPointer<PropfindJob> _proFindJob;
+    QPointer<MinioJob> _minioJob;
 
 public:
     QByteArray _dataFingerprint;

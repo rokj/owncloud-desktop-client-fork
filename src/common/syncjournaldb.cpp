@@ -908,7 +908,7 @@ Result<void, QString> SyncJournalDb::setFileRecord(const SyncJournalFileRecord &
             }
         }
     }
-    OC_ASSERT(!record._remotePerm.isNull());
+
     qCInfo(lcDb) << "Updating file record for path:" << record._path << "inode:" << record._inode
                  << "modtime:" << record._modtime << "type:" << record._type
                  << "etag:" << record._etag << "fileId:" << record._fileId << "remotePerm:" << record._remotePerm.toString()

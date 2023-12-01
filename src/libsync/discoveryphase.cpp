@@ -19,6 +19,7 @@
 #include "common/asserts.h"
 #include "common/checksums.h"
 
+#include "minio-cpp/include/response.h"
 #include "vio/csync_vio_local.h"
 
 #include <QDateTime>
@@ -27,6 +28,7 @@
 #include <QLoggingCategory>
 #include <QUrl>
 #include <cstring>
+#include <iostream>
 
 
 namespace OCC {
@@ -333,39 +335,23 @@ DiscoverySingleDirectoryJob::DiscoverySingleDirectoryJob(const AccountPtr &accou
 
 void DiscoverySingleDirectoryJob::start()
 {
-    // Start the actual HTTP job
-    _proFindJob = new PropfindJob(_account, _baseUrl, _subPath, PropfindJob::Depth::One, this);
+    // Start the actual HTTP job  
+    _minioJob = new MinioJob(_account, _baseUrl, _subPath, MinioJob::Depth::One, this);
 
-    QList<QByteArray> props {
-        "resourcetype",
-        "getlastmodified",
-        "getcontentlength",
-        "getetag",
-        "http://owncloud.org/ns:id",
-        "http://owncloud.org/ns:downloadURL",
-        "http://owncloud.org/ns:dDC",
-        "http://owncloud.org/ns:permissions",
-        "http://owncloud.org/ns:checksums",
-        "http://owncloud.org/ns:share-types"
-    };
-    if (_isRootPath) {
-        props << "http://owncloud.org/ns:data-fingerprint";
-    }
+    QObject::connect(_minioJob, &MinioJob::directoryListingIteratedS3, this, &DiscoverySingleDirectoryJob::directoryListingIteratedSlotS3);
 
-
-    _proFindJob->setProperties(props);
-
-    QObject::connect(_proFindJob, &PropfindJob::directoryListingIterated,
-        this, &DiscoverySingleDirectoryJob::directoryListingIteratedSlot);
-    QObject::connect(_proFindJob, &PropfindJob::finishedWithError, this, &DiscoverySingleDirectoryJob::lsJobFinishedWithErrorSlot);
-    QObject::connect(_proFindJob, &PropfindJob::finishedWithoutError, this, &DiscoverySingleDirectoryJob::lsJobFinishedWithoutErrorSlot);
-    _proFindJob->start();
+//    QObject::connect(_minioJob, &MinioJob::directoryListingIterated,
+//        this, &DiscoverySingleDirectoryJob::directoryListingIteratedSlot);
+    // QObject::connect(_proFindJob, &PropfindJob::finishedWithError, this, &DiscoverySingleDirectoryJob::lsJobFinishedWithErrorSlot);
+    QObject::connect(_minioJob, &MinioJob::finishedWithoutError, this, &DiscoverySingleDirectoryJob::lsJobFinishedWithoutErrorSlot);
+    _minioJob->start();
+    std::cout << "im finshed with starting minio job" << std::endl;
 }
 
 void DiscoverySingleDirectoryJob::abort()
 {
-    if (_proFindJob) {
-        _proFindJob->abort();
+    if (_minioJob) {
+        _minioJob->abort();
     }
 }
 
@@ -417,40 +403,39 @@ static void propertyMapToRemoteInfo(const QMap<QString, QString> &map, RemoteInf
 
 void DiscoverySingleDirectoryJob::directoryListingIteratedSlot(const QString &file, const QMap<QString, QString> &map)
 {
-    if (!_ignoredFirst) {
-        // The first entry is for the folder itself, we should process it differently.
-        _ignoredFirst = true;
-        if (auto it = Utility::optionalFind(map, QStringLiteral("permissions"))) {
-            auto perm = RemotePermissions::fromServerString(it->value());
-            emit firstDirectoryPermissions(perm);
-            _isExternalStorage = perm.hasPermission(RemotePermissions::IsMounted);
-        }
-        if (auto it = Utility::optionalFind(map, QStringLiteral("data-fingerprint"))) {
-            _dataFingerprint = it->value().toUtf8();
-            if (_dataFingerprint.isEmpty()) {
-                // Placeholder that means that the server supports the feature even if it did not set one.
-                _dataFingerprint = "[empty]";
-            }
-        }
-    } else {
+//    if (!_ignoredFirst) {
+//        // The first entry is for the folder itself, we should process it differently.
+//        _ignoredFirst = true;
+//        if (auto it = Utility::optionalFind(map, QStringLiteral("permissions"))) {
+//            auto perm = RemotePermissions::fromServerString(it->value());
+//            emit firstDirectoryPermissions(perm);
+//            _isExternalStorage = perm.hasPermission(RemotePermissions::IsMounted);
+//        }
+//        if (auto it = Utility::optionalFind(map, QStringLiteral("data-fingerprint"))) {
+//            _dataFingerprint = it->value().toUtf8();
+//            if (_dataFingerprint.isEmpty()) {
+//                // Placeholder that means that the server supports the feature even if it did not set one.
+//                _dataFingerprint = "[empty]";
+//            }
+//        }
+//    } else {
 
-        RemoteInfo result;
-        int slash = file.lastIndexOf(QLatin1Char('/'));
-        result.name = file.mid(slash + 1);
-        result.size = -1;
-        propertyMapToRemoteInfo(map, result);
-        if (result.isDirectory)
-            result.size = 0;
+    RemoteInfo result;
+    int slash = file.lastIndexOf(QLatin1Char('/'));
+    result.name = file.mid(slash + 1);
+    result.size = -1;
+    propertyMapToRemoteInfo(map, result);
+    if (result.isDirectory)
+        result.size = 0;
 
-        if (_isExternalStorage && result.remotePerm.hasPermission(RemotePermissions::IsMounted)) {
-            /* All the entries in a external storage have 'M' in their permission. However, for all
-               purposes in the desktop client, we only need to know about the mount points.
-               So replace the 'M' by a 'm' for every sub entries in an external storage */
-            result.remotePerm.unsetPermission(RemotePermissions::IsMounted);
-            result.remotePerm.setPermission(RemotePermissions::IsMountedSub);
-        }
-        _results.push_back(std::move(result));
+    if (_isExternalStorage && result.remotePerm.hasPermission(RemotePermissions::IsMounted)) {
+        /* All the entries in a external storage have 'M' in their permission. However, for all
+           purposes in the desktop client, we only need to know about the mount points.
+           So replace the 'M' by a 'm' for every sub entries in an external storage */
+        result.remotePerm.unsetPermission(RemotePermissions::IsMounted);
+        result.remotePerm.setPermission(RemotePermissions::IsMountedSub);
     }
+    _results.push_back(std::move(result));
 
     //This works in concerto with the RequestEtagJob and the Folder object to check if the remote folder changed.
     if (_firstEtag.isEmpty()) {
@@ -460,20 +445,56 @@ void DiscoverySingleDirectoryJob::directoryListingIteratedSlot(const QString &fi
     }
 }
 
+void DiscoverySingleDirectoryJob::directoryListingIteratedSlotS3(const minio::s3::Item &item, const QMap<QString, QString> &map)
+{
+    RemoteInfo result;
+
+    const QString name = QString::fromUtf8(item.name.data(), item.name.size());
+    int slash = name.lastIndexOf(QLatin1Char('/'));
+    result.name = name.mid(slash + 1);
+    result.size = item.size;
+    result.etag = QString::fromUtf8(item.etag.data(), item.etag.size());
+    const bool isDirectory = (item.is_prefix && item.size == 0) ? true : false;
+    // propertyMapToRemoteInfo(map, result);
+
+    if (isDirectory)
+        result.size = 0;
+
+    if (_isExternalStorage && result.remotePerm.hasPermission(RemotePermissions::IsMounted)) {
+        /* All the entries in a external storage have 'M' in their permission. However, for all
+           purposes in the desktop client, we only need to know about the mount points.
+           So replace the 'M' by a 'm' for every sub entries in an external storage */
+        result.remotePerm.unsetPermission(RemotePermissions::IsMounted);
+        result.remotePerm.setPermission(RemotePermissions::IsMountedSub);
+    }
+    _results.push_back(std::move(result));
+
+           //This works in concerto with the RequestEtagJob and the Folder object to check if the remote folder changed.
+    if (_firstEtag.isEmpty()) {
+        //                if (auto it = Utility::optionalFind(map, QStringLiteral("getetag"))) {
+        //                    _firstEtag = Utility::normalizeEtag(it->value()); // for directory itself
+        //                }
+    }
+}
+
 void DiscoverySingleDirectoryJob::lsJobFinishedWithoutErrorSlot()
 {
-    if (!_ignoredFirst) {
-        // This is a sanity check, if we haven't _ignoredFirst then it means we never received any directoryListingIteratedSlot
-        // which means somehow the server XML was bogus
-        emit finished(HttpError{ 0, tr("Server error: PROPFIND reply is not XML formatted!") });
-        deleteLater();
-        return;
-    } else if (!_error.isEmpty()) {
+
+    // todo: Rok Jaklic
+//    if (!_ignoredFirst) {
+//        // This is a sanity check, if we haven't _ignoredFirst then it means we never received any directoryListingIteratedSlot
+//        // which means somehow the server XML was bogus
+//        emit finished(HttpError{ 0, tr("Server error: PROPFIND reply is not XML formatted!") });
+//        deleteLater();
+//        return;
+//    } else
+
+    if (!_error.isEmpty()) {
         emit finished(HttpError{ 0, _error });
         deleteLater();
         return;
     }
-    emit etag(_firstEtag, _proFindJob->responseQTimeStamp());
+    // emit etag(_firstEtag, _proFindJob->responseQTimeStamp());
     emit finished(_results);
     deleteLater();
 }

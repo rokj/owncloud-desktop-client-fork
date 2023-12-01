@@ -31,7 +31,7 @@ ownCloudTheme::ownCloudTheme()
 
 QColor ownCloudTheme::wizardHeaderBackgroundColor() const
 {
-    return QColor(4, 30, 66);
+    return QColor(230, 90, 0);
 }
 
 QColor ownCloudTheme::wizardHeaderTitleColor() const

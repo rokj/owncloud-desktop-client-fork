@@ -39,6 +39,7 @@
 #include "syncresult.h"
 #include "syncrunfilelog.h"
 #include "theme.h"
+#include <iostream>
 
 #ifdef Q_OS_WIN
 #include "common/utility_win.h"
@@ -414,7 +415,15 @@ bool Folder::syncPaused() const
 
 bool Folder::canSync() const
 {
+    std::cout << "syncPause " << syncPaused() << std::endl;
+    std::cout << "accountState()->readyForSync() " << accountState()->readyForSync() << std::endl;
+    std::cout << "isReady() " << isReady() << std::endl;
+    std::cout << "_accountState->account()->hasCapabilities() " << _accountState->account()->hasCapabilities() << std::endl;
+    // std::cout << "_folderWatcher " << _folderWatcher << std::endl;
+
+    // return !syncPaused() && isReady() && _folderWatcher;
     return !syncPaused() && accountState()->readyForSync() && isReady() && _accountState->account()->hasCapabilities() && _folderWatcher;
+    // return !syncPaused() && accountState()->readyForSync() && isReady() && _folderWatcher;
 }
 
 bool Folder::isReady() const
@@ -696,31 +705,34 @@ void Folder::slotWatchedPathsChanged(const QSet<QString> &paths, ChangeReason re
                         spurious = false;
                 }
             }
-            if (spurious) {
-                qCInfo(lcFolder) << "Ignoring spurious notification for file" << relativePath;
-                Q_ASSERT([&] {
-                    Q_ASSERT(record.isValid());
-                    // we don't intend to burn to many cpu cycles so limit this check on small files
-                    if (!record.isVirtualFile() && record._fileSize < static_cast<qint64>(1_mb)) {
-                        const auto header = ChecksumHeader::parseChecksumHeader(record._checksumHeader);
-                        auto *compute = new ComputeChecksum(this);
-                        compute->setChecksumType(header.type());
-                        quint64 inode = 0;
-                        FileSystem::getInode(path, &inode);
-                        connect(compute, &ComputeChecksum::done, this, [=](CheckSums::Algorithm, const QByteArray &checksum) {
-                            compute->deleteLater();
-                            qWarning() << "Spurious notification:" << path << (checksum == header.checksum()) << checksum << header.checksum()
-                                       << "Inode:" << record._inode << inode;
-                            Q_ASSERT(inode == record._inode);
-                            Q_ASSERT(checksum == header.checksum());
-                        });
-                        compute->start(path);
-                    }
-                    return true;
-                }());
 
-                continue; // probably a spurious notification
-            }
+            qCInfo(lcFolder) << "file " << relativePath << " " << spurious;
+            // todo Rok Jaklic we do not need to check checksums right in s3?
+//            if (spurious) {
+//                qCInfo(lcFolder) << "Ignoring spurious notification for file" << relativePath;
+//                Q_ASSERT([&] {
+//                    Q_ASSERT(record.isValid());
+//                    // we don't intend to burn to many cpu cycles so limit this check on small files
+//                    if (!record.isVirtualFile() && record._fileSize < static_cast<qint64>(1_mb)) {
+//                        const auto header = ChecksumHeader::parseChecksumHeader(record._checksumHeader);
+//                        auto *compute = new ComputeChecksum(this);
+//                        compute->setChecksumType(header.type());
+//                        quint64 inode = 0;
+//                        FileSystem::getInode(path, &inode);
+//                        connect(compute, &ComputeChecksum::done, this, [=](CheckSums::Algorithm, const QByteArray &checksum) {
+//                            compute->deleteLater();
+//                            qWarning() << "Spurious notification:" << path << (checksum == header.checksum()) << checksum << header.checksum()
+//                                       << "Inode:" << record._inode << inode;
+//                            Q_ASSERT(inode == record._inode);
+//                            Q_ASSERT(checksum == header.checksum());
+//                        });
+//                        compute->start(path);
+//                    }
+//                    return true;
+//                }());
+
+//                continue; // probably a spurious notification
+//            }
         }
         warnOnNewExcludedItem(record, relativePath);
 

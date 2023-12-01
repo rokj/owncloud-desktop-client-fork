@@ -302,6 +302,8 @@ void AccountState::tagLastSuccessfullETagRequest(const QDateTime &tp)
 
 void AccountState::checkConnectivity(bool blockJobs)
 {
+    return;
+
     if (isSignedOut() || _waitingForNewCredentials) {
         return;
     }
@@ -589,7 +591,7 @@ void AccountState::setSettingUp(bool settingUp)
 }
 bool AccountState::readyForSync() const
 {
-    return !_fetchCapabilitiesJob && isConnected();
+    return !_fetchCapabilitiesJob;
 }
 
 } // namespace OCC

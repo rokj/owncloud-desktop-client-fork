@@ -2,6 +2,9 @@ include(ECMAddAppIcon)
 
 find_package(KDSingleApplication-qt6 1.0.0 REQUIRED)
 
+set(Qt6Core_DIR /usr/lib/x86_64-linux-gnu/cmake/Qt6Core)
+find_package(Qt6Core REQUIRED)
+
 set(client_UI_SRCS
     aboutdialog.ui
     accountsettings.ui
@@ -101,6 +104,8 @@ add_subdirectory(loginrequireddialog)
 add_library(owncloudCore STATIC ${final_src})
 set_target_properties(owncloudCore PROPERTIES AUTOUIC ON AUTORCC ON)
 target_link_libraries(owncloudCore
+    PRIVATE
+        /home/arne/development/c/owncloud/src/minio-cpp/build/src/libminiocpp.a /home/arne/development/c/owncloud/src/minio-cpp/build/vcpkg_installed/x64-linux/lib/libpugixml.a /home/arne/development/c/owncloud/src/minio-cpp/build/vcpkg_installed/x64-linux/lib/libcurlpp.a /home/arne/development/c/owncloud/src/minio-cpp/build/vcpkg_installed/x64-linux/lib/libcurl.a  /home/arne/development/c/owncloud/src/minio-cpp/build/vcpkg_installed/x64-linux/lib/libssl.a /home/arne/development/c/owncloud/src/minio-cpp/build/vcpkg_installed/x64-linux/lib/libcrypto.a
     PUBLIC
         Qt::Widgets Qt::Network Qt::Xml
         newwizard folderwizard spaces loginrequireddialog
@@ -121,6 +126,8 @@ target_include_directories(owncloudCore PUBLIC
     ${CMAKE_SOURCE_DIR}/src/3rdparty/qtlockedfile
     ${CMAKE_SOURCE_DIR}/src/3rdparty/qtsingleapplication
     ${CMAKE_CURRENT_BINARY_DIR}
+        /home/arne/development/c/owncloud/src/minio-cpp/build/include
+        /home/arne/development/c/owncloud/src/minio-cpp/build/vcpkg_installed/x64-linux/include/
 )
 
 IF( APPLE )
@@ -157,7 +164,20 @@ set_target_properties(owncloud PROPERTIES
     AUTORCC ON
 )
 apply_common_target_settings(owncloud)
-target_link_libraries(owncloud owncloudCore owncloudResources KDAB::kdsingleapplication )
+# add_subdirectory("/home/arne/development/c/owncloud/src/minio-cpp/src/")
+target_include_directories(owncloud PUBLIC
+        # /home/arne/development/c/owncloud/src/minio-cpp/include/
+        /home/arne/development/c/owncloud/src/minio-cpp/build/include
+        /home/arne/development/c/owncloud/src/minio-cpp/build/vcpkg_installed/x64-linux/include/
+)
+
+
+link_directories(/home/arne/development/c/owncloud/src/minio-cpp/build/vcpkg_installed/x64-linux/lib)
+link_directories(/home/arne/development/c/owncloud/src/minio-cpp/build/src)
+# link_directories(/home/arne/development/c/owncloud/src/minio-cpp/build/include)
+
+# target_link_libraries(owncloud owncloudCore owncloudResources KDAB::kdsingleapplication /home/arne/development/c/owncloud/src/minio-cpp/build/src/libminiocpp.a /home/arne/development/c/owncloud/src/minio-cpp/build/vcpkg_installed/x64-linux/lib/libcurlpp.a /home/arne/development/c/owncloud/src/minio-cpp/build/vcpkg_installed/x64-linux/lib/libcurl.a  /home/arne/development/c/owncloud/src/minio-cpp/build/vcpkg_installed/x64-linux/lib/libssl.a /home/arne/development/c/owncloud/src/minio-cpp/build/vcpkg_installed/x64-linux/lib/libcrypto.a)
+target_link_libraries(owncloud owncloudCore owncloudResources KDAB::kdsingleapplication)
 
 MESSAGE(STATUS "OWNCLOUD_SIDEBAR_ICONS: ${APPLICATION_ICON_NAME}: ${OWNCLOUD_SIDEBAR_ICONS}")
 

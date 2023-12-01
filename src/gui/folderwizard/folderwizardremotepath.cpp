@@ -17,6 +17,7 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 #include "folderwizardremotepath.h"
+#include "creds/httpcredentials.h"
 #include "ui_folderwizardtargetpage.h"
 
 #include "folderwizard.h"
@@ -27,6 +28,9 @@
 #include "libsync/theme.h"
 
 #include "resources/resources.h"
+
+#include "minio-cpp/include/client.h"
+#include "gui/accountmanager.h"
 
 #include <QDir>
 #include <QInputDialog>
@@ -234,9 +238,11 @@ void FolderWizardRemotePath::slotUpdateDirectories(const QStringList &list)
 
 void FolderWizardRemotePath::slotRefreshFolders()
 {
-    runPropFindJob(QStringLiteral("/"));
+    // runPropFindJob(QStringLiteral("/"));
     _ui->folderTreeWidget->clear();
     _ui->folderEntry->clear();
+
+    minioJob(QStringLiteral("/"));
 }
 
 void FolderWizardRemotePath::slotItemExpanded(QTreeWidgetItem *item)
@@ -245,7 +251,8 @@ void FolderWizardRemotePath::slotItemExpanded(QTreeWidgetItem *item)
     if (!dir.startsWith(QLatin1Char('/'))) {
         dir.prepend(QLatin1Char('/'));
     }
-    runPropFindJob(dir);
+
+    minioJob(dir);
 }
 
 void FolderWizardRemotePath::slotCurrentItemChanged(QTreeWidgetItem *item)
@@ -303,6 +310,55 @@ PropfindJob *FolderWizardRemotePath::runPropFindJob(const QString &path)
     job->start();
 
     return job;
+}
+
+void FolderWizardRemotePath::minioJob(const QString &path)
+{
+    qCDebug(lcFolderWizard) << "doing path" << path;
+
+    QList<QString> bucketList;
+
+    AccountPtr accountPtr = folderWizardPrivate()->accountState()->account();
+    auto creds = accountPtr->credentials();
+
+    qCDebug(lcFolderWizard) << "user" << creds->user();
+    // qCDebug(lcFolderWizard) << "password" << creds->password();
+
+    // accountPtr->url()
+    minio::s3::BaseUrl base_url(accountPtr->url().toString().toStdString());
+    minio::creds::StaticProvider provider(creds->user().toStdString(), creds->password().toStdString());
+
+    minio::s3::Client client(base_url, &provider);
+    minio::s3::ListBucketsResponse resp = client.ListBuckets();
+    if (!resp) {
+        // todo: show error
+        qCDebug(lcFolderWizard) << "unable to do bucket existence check" << resp.Error();
+    }
+
+    for (const auto& bucket : resp.buckets) {
+        bucketList.append(QString::fromUtf8(bucket.name.c_str()));
+    }
+
+    QString webdavFolder = folderWizardPrivate()->davUrl().path();
+
+    QTreeWidgetItem *root = _ui->folderTreeWidget->topLevelItem(0);
+    if (!root) {
+        root = new QTreeWidgetItem(_ui->folderTreeWidget);
+        root->setText(0, Theme::instance()->appNameGUI());
+        root->setIcon(0, Theme::instance()->applicationIcon());
+        root->setToolTip(0, tr("Choose this to sync the entire account"));
+        root->setData(0, Qt::UserRole, QStringLiteral("/"));
+    }
+
+    Utility::sortFilenames(bucketList);
+    for (auto path : qAsConst(bucketList)) {
+        path.remove(webdavFolder);
+        QStringList paths = path.split(QLatin1Char('/'));
+        if (paths.last().isEmpty())
+            paths.removeLast();
+        recursiveInsert(root, paths, path);
+    }
+    root->setExpanded(true);
 }
 
 FolderWizardRemotePath::~FolderWizardRemotePath()

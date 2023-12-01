@@ -119,6 +119,12 @@ QString HttpCredentials::user() const
     return _user;
 }
 
+
+QString HttpCredentials::password() const
+{
+    return _password;
+}
+
 void HttpCredentials::setAccount(Account *account)
 {
     AbstractCredentials::setAccount(account);

@@ -189,7 +189,7 @@ private:
     QPointer<ConnectionValidator> _connectionValidator;
     QPointer<UpdateUrlDialog> _updateUrlDialog;
     QPointer<TlsErrorDialog> _tlsDialog;
-    bool _supportsSpaces = true;
+    bool _supportsSpaces = false;
 
     bool _settingUp = false;
 

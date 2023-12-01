@@ -124,16 +124,18 @@ void SetupWizardController::changeStateTo(SetupWizardState nextState, ChangeReas
         break;
     }
     case SetupWizardState::CredentialsState: {
-        switch (_context->accountBuilder().authType()) {
-        case DetermineAuthTypeJob::AuthType::Basic:
-            _currentState = new BasicCredentialsSetupWizardState(_context);
-            break;
-        case DetermineAuthTypeJob::AuthType::OAuth:
-            _currentState = new OAuthCredentialsSetupWizardState(_context);
-            break;
-        default:
-            Q_UNREACHABLE();
-        }
+//        switch (_context->accountBuilder().authType()) {
+//        case DetermineAuthTypeJob::AuthType::Basic:
+//            _currentState = new BasicCredentialsSetupWizardState(_context);
+//            break;
+//        case DetermineAuthTypeJob::AuthType::OAuth:
+//            _currentState = new OAuthCredentialsSetupWizardState(_context);
+//            break;
+//        default:
+//            Q_UNREACHABLE();
+//        }
+
+        _currentState = new BasicCredentialsSetupWizardState(_context);
 
         break;
     }
@@ -178,30 +180,37 @@ void SetupWizardController::changeStateTo(SetupWizardState nextState, ChangeReas
         }
         case SetupWizardState::CredentialsState: {
             // for now, we assume there is only a single instance
-            const auto webFingerInstances = _context->accountBuilder().webFingerInstances();
-            if (!webFingerInstances.isEmpty()) {
-                Q_ASSERT(webFingerInstances.size() == 1);
-                _context->accountBuilder().setWebFingerSelectedInstance(webFingerInstances.front());
-            }
+//            const auto webFingerInstances = _context->accountBuilder().webFingerInstances();
+//            if (!webFingerInstances.isEmpty()) {
+//                Q_ASSERT(webFingerInstances.size() == 1);
+//                _context->accountBuilder().setWebFingerSelectedInstance(webFingerInstances.front());
+//            }
 
             // not a fan of performing this job here, should be moved into its own (headless) state IMO
             // we can bind it to the current state, which will be cleaned up by changeStateTo(...) as soon as the job finished
-            auto fetchUserInfoJob = _context->startFetchUserInfoJob(_currentState);
+//            auto fetchUserInfoJob = _context->startFetchUserInfoJob(_currentState);
+//
+//            connect(fetchUserInfoJob, &CoreJob::finished, this, [this, fetchUserInfoJob] {
+//                if (fetchUserInfoJob->success()) {
+//                    auto result = fetchUserInfoJob->result().value<FetchUserInfoResult>();
+//                    _context->accountBuilder().setDisplayName(result.displayName());
+//                    _context->accountBuilder().authenticationStrategy()->setDavUser(result.userName());
+//                    changeStateTo(SetupWizardState::AccountConfiguredState);
+//                } else if (fetchUserInfoJob->reply()->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt() == 401) {
+//                    _context->window()->showErrorMessage(tr("Invalid credentials"));
+//                    changeStateTo(_currentState->state());
+//                } else {
+//                    _context->window()->showErrorMessage(tr("Failed to retrieve user information from server"));
+//                    changeStateTo(_currentState->state());
+//                }
+//            });
+//
+            // auto result = fetchUserInfoJob->result().value<FetchUserInfoResult>();
+            // TODO: get username
+            _context->accountBuilder().setDisplayName(QString::fromStdString("TODO display username"));
+            _context->accountBuilder().authenticationStrategy()->setDavUser(QString::fromStdString("TODO dav user"));
 
-            connect(fetchUserInfoJob, &CoreJob::finished, this, [this, fetchUserInfoJob] {
-                if (fetchUserInfoJob->success()) {
-                    auto result = fetchUserInfoJob->result().value<FetchUserInfoResult>();
-                    _context->accountBuilder().setDisplayName(result.displayName());
-                    _context->accountBuilder().authenticationStrategy()->setDavUser(result.userName());
-                    changeStateTo(SetupWizardState::AccountConfiguredState);
-                } else if (fetchUserInfoJob->reply()->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt() == 401) {
-                    _context->window()->showErrorMessage(tr("Invalid credentials"));
-                    changeStateTo(_currentState->state());
-                } else {
-                    _context->window()->showErrorMessage(tr("Failed to retrieve user information from server"));
-                    changeStateTo(_currentState->state());
-                }
-            });
+            changeStateTo(SetupWizardState::AccountConfiguredState);
 
             return;
         }

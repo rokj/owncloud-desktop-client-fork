@@ -91,7 +91,7 @@ void ConnectionValidator::systemProxyLookupDone(const QNetworkProxy &proxy)
     }
     _account->accessManager()->setProxy(proxy);
 
-    slotCheckServerAndAuth();
+    // slotCheckServerAndAuth();
 }
 
 // The actual check

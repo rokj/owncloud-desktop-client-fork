@@ -78,7 +78,7 @@
        <item>
         <widget class="QLabel" name="label">
          <property name="text">
-          <string>Preparing the account</string>
+          <string>Preparing the account TODO rok im here</string>
          </property>
          <property name="alignment">
           <set>Qt::AlignCenter</set>
@@ -141,6 +141,13 @@
        </property>
       </widget>
      </item>
+     <item>
+      <widget class="QPushButton" name="refreshRemoteButton">
+       <property name="text">
+        <string/>
+       </property>
+      </widget>
+     </item>     
      <item>
       <spacer name="addButtonSpacer">
        <property name="orientation">

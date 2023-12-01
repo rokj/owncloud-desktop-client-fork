@@ -168,9 +168,9 @@ void ProcessDirectoryJob::process()
         // Recall file shall not be ignored (#4420)
         const bool isHidden = [&] {
             if (Q_UNLIKELY(Theme::instance()->enableCernBranding())) {
-                return e.localEntry.isHidden || (f.first[0] == QLatin1Char('.') && f.first != QLatin1String(".sys.admin#recall#"));
+                return e.localEntry.isHidden || (!f.first.isEmpty() && f.first[0] == QLatin1Char('.') && f.first != QLatin1String(".sys.admin#recall#"));
             } else {
-                return e.localEntry.isHidden || f.first[0] == QLatin1Char('.');
+                return e.localEntry.isHidden || (!f.first.isEmpty() && f.first[0] == QLatin1Char('.'));
             }
         }();
         if (handleExcluded(path._target,
@@ -399,12 +399,12 @@ void ProcessDirectoryJob::processFileAnalyzeRemoteInfo(
         QStringList missingData;
         if (serverEntry.size == -1)
             missingData.append(tr("size"));
-        if (serverEntry.remotePerm.isNull())
-            missingData.append(tr("permissions"));
+//        if (serverEntry.remotePerm.isNull())
+//            missingData.append(tr("permissions"));
         if (serverEntry.etag.isEmpty())
             missingData.append(tr("etag"));
-        if (serverEntry.fileId.isEmpty())
-            missingData.append(tr("file id"));
+//        if (serverEntry.fileId.isEmpty())
+//            missingData.append(tr("file id"));
         if (!missingData.isEmpty()) {
             item->setInstruction(CSYNC_INSTRUCTION_ERROR);
             _childIgnored = true;

@@ -346,21 +346,21 @@ ValidateChecksumHeader::ValidateChecksumHeader(QObject *parent)
 ComputeChecksum *ValidateChecksumHeader::prepareStart(const QByteArray &checksumHeader)
 {
     // If the incoming header is empty no validation can happen. Just continue.
-    if (checksumHeader.isEmpty()) {
-        emit validated(CheckSums::Algorithm::PARSE_ERROR, QByteArray());
-        return nullptr;
-    }
-    _expectedChecksum = ChecksumHeader::parseChecksumHeader(checksumHeader);
-    if (!_expectedChecksum.isValid()) {
-        qCWarning(lcChecksums) << "Checksum header malformed:" << checksumHeader;
-        emit validationFailed(_expectedChecksum.error());
-        return nullptr;
-    }
+//    if (checksumHeader.isEmpty()) {
+//        emit validated(CheckSums::Algorithm::PARSE_ERROR, QByteArray());
+//        return nullptr;
+//    }
+//    _expectedChecksum = ChecksumHeader::parseChecksumHeader(checksumHeader);
+//    if (!_expectedChecksum.isValid()) {
+//        qCWarning(lcChecksums) << "Checksum header malformed:" << checksumHeader;
+//        emit validationFailed(_expectedChecksum.error());
+//        return nullptr;
+//    }
 
     auto calculator = new ComputeChecksum(this);
-    calculator->setChecksumType(_expectedChecksum.type());
-    connect(calculator, &ComputeChecksum::done,
-        this, &ValidateChecksumHeader::slotChecksumCalculated);
+//    calculator->setChecksumType(_expectedChecksum.type());
+//    connect(calculator, &ComputeChecksum::done,
+//        this, &ValidateChecksumHeader::slotChecksumCalculated);
     return calculator;
 }
 

@@ -18,6 +18,7 @@
 
 #include "abstractnetworkjob.h"
 #include "common/result.h"
+#include "minio-cpp/include/response.h"
 #include <QJsonObject>
 #include <QUrlQuery>
 #include <functional>
@@ -112,6 +113,47 @@ private:
     Depth _depth;
 };
 
+class OWNCLOUDSYNC_EXPORT MinioJob : public AbstractNetworkJob
+{
+    Q_OBJECT
+public:
+    enum class Depth {
+        Zero,
+        One
+    } Q_ENUMS(Depth);
+    explicit MinioJob(AccountPtr account, const QUrl &url, const QString &path, Depth depth, QObject *parent = nullptr);
+    void start() override;
+
+    /**
+     * Used to specify which properties shall be retrieved.
+     *
+     * The properties can
+     *  - contain no colon: they refer to a property in the DAV: namespace
+     *  - contain a colon: and thus specify an explicit namespace,
+     *    e.g. "ns:with:colons:bar", which is "bar" in the "ns:with:colons" namespace
+     */
+    void setProperties(const QList<QByteArray> &properties);
+    QList<QByteArray> properties() const;
+
+    // TODO: document...
+    const QHash<QString, qint64> &sizes() const;
+
+signals:
+    void directoryListingSubfolders(const QStringList &items);
+    void directoryListingIterated(const QString &name, const QMap<QString, QString> &properties);
+    void directoryListingIteratedS3(const minio::s3::Item &item, const QMap<QString, QString> &properties);
+    void finishedWithError(QNetworkReply *reply);
+    void finishedWithoutError();
+
+private slots:
+    void finished() override;
+
+private:
+    QList<QByteArray> _properties;
+    QHash<QString, qint64> _sizes;
+    Depth _depth;
+};
+
 
 /**
  * @brief Retrieves the account users avatar from the server using a GET request.
@@ -171,13 +213,23 @@ private:
 /**
  * @brief The RequestEtagJob class
  */
-class OWNCLOUDSYNC_EXPORT RequestEtagJob : public PropfindJob
+class OWNCLOUDSYNC_EXPORT RequestEtagJob : public AbstractNetworkJob
 {
     Q_OBJECT
 public:
     explicit RequestEtagJob(AccountPtr account, const QUrl &rootUrl, const QString &path, QObject *parent = nullptr);
 
     const QString &etag() const;
+
+    std::string getRootDatetimeModified(const std::string &bucket);
+
+    void start() override;
+
+signals:
+    void directoryListingIteratedS3(const minio::s3::Item &item, const QMap<QString, QString> &properties);
+
+private slots:
+    void finished() override;
 
 private:
     QString _etag;

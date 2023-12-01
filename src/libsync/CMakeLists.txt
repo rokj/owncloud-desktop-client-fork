@@ -1,3 +1,5 @@
+set(CMAKE_BUILD_TYPE Debug)
+
 find_package(LibreGraphAPI 1.0.4 REQUIRED)
 set_package_properties(LibreGraphAPI PROPERTIES
         URL https://github.com/owncloud/libre-graph-api-cpp-qt-client.git
@@ -91,6 +93,7 @@ target_link_libraries(libsync
         Qt::Concurrent
         ZLIB::ZLIB
         Qt6Keychain::Qt6Keychain
+        /home/arne/development/c/owncloud/src/minio-cpp/build/src/libminiocpp.a /home/arne/development/c/owncloud/src/minio-cpp/build/vcpkg_installed/x64-linux/lib/libpugixml.a /home/arne/development/c/owncloud/src/minio-cpp/build/vcpkg_installed/x64-linux/lib/libcurlpp.a /home/arne/development/c/owncloud/src/minio-cpp/build/vcpkg_installed/x64-linux/lib/libcurl.a  /home/arne/development/c/owncloud/src/minio-cpp/build/vcpkg_installed/x64-linux/lib/libssl.a /home/arne/development/c/owncloud/src/minio-cpp/build/vcpkg_installed/x64-linux/lib/libcrypto.a
 )
 
 apply_common_target_settings(libsync)
@@ -111,6 +114,11 @@ if ( APPLE )
          /System/Library/Frameworks/IOKit.framework
     )
 endif()
+
+target_include_directories(libsync PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/minio-cpp/build/include>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/minio-cpp/build/vcpkg_installed/x64-linux/include>
+)
 
 if(Inotify_FOUND)
     target_include_directories(libsync PRIVATE ${Inotify_INCLUDE_DIRS})

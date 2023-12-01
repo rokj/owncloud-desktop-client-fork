@@ -15,6 +15,7 @@
 #include "resources.h"
 
 #include <QPalette>
+#include <iostream>
 
 using namespace OCC;
 using namespace Resources;
@@ -32,7 +33,8 @@ QIcon OCC::Resources::getCoreIcon(const QString &icon_name)
         return {};
     }
     const QString theme = Resources::isUsingDarkTheme() ? QStringLiteral("dark") : QStringLiteral("light");
-    const QString path = QStringLiteral(":/client/resources/%1/%2").arg(theme, icon_name);
+    const QString path = QStringLiteral(":/client/resources/%1/%2.png").arg(theme, icon_name);
+    std::cout << "rok debug icon path " << path.toStdString() << std::endl;
     const QIcon icon(path);
     // were we able to load the file?
     Q_ASSERT(icon.actualSize({100, 100}).isValid());

@@ -142,15 +142,16 @@ void PropagateUploadFileCommon::start()
 
     propagator()->_activeJobList.append(this);
 
-    if (!_deleteExisting) {
-        return slotComputeContentChecksum();
-    }
+    // Todo: Rok Jaklic
+//    if (!_deleteExisting) {
+//        return slotComputeContentChecksum();
+//    }
 
     auto job = new DeleteJob(propagator()->account(), propagator()->webDavUrl(),
         propagator()->fullRemotePath(_item->_file),
         this);
     addChildJob(job);
-    connect(job, &DeleteJob::finishedSignal, this, &PropagateUploadFileCommon::slotComputeContentChecksum);
+    // connect(job, &DeleteJob::finishedSignal, this, &PropagateUploadFileCommon::slotComputeContentChecksum);
     job->start();
 }
 

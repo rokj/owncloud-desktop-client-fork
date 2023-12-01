@@ -26,7 +26,7 @@ using namespace std::chrono_literals;
 using namespace OCC;
 
 namespace {
-constexpr auto pollTimeoutC = 30s;
+constexpr auto pollTimeoutC = 10s;
 }
 
 Q_LOGGING_CATEGORY(lcEtagWatcher, "scheduler.etagwatcher", QtInfoMsg)
@@ -95,25 +95,24 @@ void ETagWatcher::updateEtag(Folder *f, const QString &etag)
 
 void ETagWatcher::startOC10EtagJob(Folder *f)
 {
-    if (f->accountState()->state() == AccountState::State::Connected) {
+    // todo Rok Jaklic
+    // if (f->accountState()->state() == AccountState::State::Connected) {
         ConfigFile cfg;
         const auto account = f->accountState()->account();
         const auto polltime = cfg.remotePollInterval(account->capabilities().remotePollInterval());
         if (_lastEtagJob[f].lastUpdate.duration() > polltime) {
             auto *requestEtagJob = new RequestEtagJob(account, f->webDavUrl(), f->remotePath(), f);
-            requestEtagJob->setTimeout(pollTimeoutC);
+
             connect(requestEtagJob, &RequestEtagJob::finishedSignal, this, [requestEtagJob, f, this] {
-                if (requestEtagJob->httpStatusCode() == 207) {
-                    if (OC_ENSURE_NOT(requestEtagJob->etag().isEmpty())) {
-                        f->accountState()->tagLastSuccessfullETagRequest(requestEtagJob->responseQTimeStamp());
-                        updateEtag(f, requestEtagJob->etag());
-                    } else {
-                        qCWarning(lcEtagWatcher) << "Invalid empty etag received for" << f->displayName() << f->path() << requestEtagJob;
-                    }
+                if (OC_ENSURE_NOT(requestEtagJob->etag().isEmpty())) {
+                    f->accountState()->tagLastSuccessfullETagRequest(QDateTime::currentDateTimeUtc());
+                    updateEtag(f, requestEtagJob->etag());
+                } else {
+                    qCWarning(lcEtagWatcher) << "Invalid empty etag received for" << f->displayName() << f->path() << requestEtagJob;
                 }
             });
             qCDebug(lcEtagWatcher) << "Starting etag check for folder" << f->displayName() << f->path();
             requestEtagJob->start();
         }
-    }
+    // }
 }

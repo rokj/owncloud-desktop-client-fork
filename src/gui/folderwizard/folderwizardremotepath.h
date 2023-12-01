@@ -68,6 +68,7 @@ protected slots:
 
 private:
     PropfindJob *runPropFindJob(const QString &path);
+    void minioJob(const QString &path);
     void recursiveInsert(QTreeWidgetItem *parent, QStringList pathTrail, const QString &path);
     bool selectByPath(QString path);
     Ui_FolderWizardTargetPage *_ui;

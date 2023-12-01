@@ -18,6 +18,7 @@
 #include "gui/scheduling/etagwatcher.h"
 #include "libsync/configfile.h"
 #include "libsync/syncengine.h"
+#include <iostream>
 
 using namespace std::chrono_literals;
 
@@ -125,6 +126,9 @@ SyncScheduler::~SyncScheduler()
 
 void SyncScheduler::enqueueFolder(Folder *folder, Priority priority)
 {
+    std::cout << "----------------------" << std::endl;
+//    std::cout << "folder->isReady(): " << folder->isReady() << std::endl;
+//    std::cout << "folder->canSync(): " << folder->canSync() << std::endl;
     Q_ASSERT(folder->isReady());
     Q_ASSERT(folder->canSync());
     qCInfo(lcSyncScheduler) << "Enqueue" << folder->path() << priority << "QueueSize:" << _queue->size();

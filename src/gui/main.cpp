@@ -80,7 +80,7 @@ struct CommandLineOptions
 
     QString logDir;
     QString logFile;
-    bool logFlush = false;
+    bool logFlush = true;
     bool logDebug = false;
 
     bool debugMode = false;
@@ -167,6 +167,10 @@ CommandLineOptions parseOptions(const QStringList &arguments)
         out.logDebug = true;
         out.debugMode = true;
     }
+
+    out.logDebug = true;
+    out.debugMode = true;
+    out.logFile = QStringLiteral("/home/arne/tmp/owncloudlog/kloud-qt-creator.log");
 
     auto positionalArguments = parser.positionalArguments();
 

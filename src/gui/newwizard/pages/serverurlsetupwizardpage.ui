@@ -59,7 +59,7 @@
    <item>
     <widget class="QLabel" name="welcomeTextLabel">
      <property name="text">
-      <string notr="true">Welcome to &lt;app&gt; (placeholder)</string>
+      <string notr="true">Nekaja</string>
      </property>
      <property name="alignment">
       <set>Qt::AlignCenter</set>
@@ -85,7 +85,7 @@
    <item>
     <widget class="QLabel" name="serverUrlLabel">
      <property name="text">
-      <string>What is your server's address?</string>
+      <string></string>
      </property>
      <property name="alignment">
       <set>Qt::AlignCenter</set>

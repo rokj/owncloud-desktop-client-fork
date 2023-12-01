@@ -14,6 +14,7 @@
 
 #include "propagatedownload.h"
 #include "account.h"
+#include "creds/abstractcredentials.h"
 #include "filesystem.h"
 #include "networkjobs.h"
 #include "owncloudpropagator_p.h"
@@ -33,6 +34,7 @@
 #include <QLoggingCategory>
 #include <QNetworkAccessManager>
 #include <QRandomGenerator>
+#include <minio-cpp/include/client.h>
 
 #include <cmath>
 
@@ -178,24 +180,90 @@ GETFileJob::GETFileJob(AccountPtr account, const QUrl &url, const QString &path,
 
 void GETFileJob::start()
 {
+    QString fullUrl = url().toString();
+    QString tmpFile = qobject_cast<QFile *>(_device)->fileName();
+
+    qCDebug(lcGetJob) << "will try download from url" << url().toString();
+    qCDebug(lcGetJob) << "will try download to" << tmpFile;
+
+    QString serverUrl = _account->url().toString();
+    QStringList splittedUrl = fullUrl.replace(serverUrl, QStringLiteral("")).split(QStringLiteral("/"));
+
+    // todo: Rok Jaklic refactor
+    if (splittedUrl.size() <= 1) {
+        qCDebug(lcGetJob) << "could not split url to get bucket";
+    }
+    const QString bucket = splittedUrl[1];
+    const QString replaceString = serverUrl + QStringLiteral("/") + bucket;
+    const QString object = url().toString().replace(replaceString, QStringLiteral(""));
+
+    qCDebug(lcGetJob) << "using bucket" << bucket;
+    qCDebug(lcGetJob) << "using object" << object;
+
     if (_resumeStart > 0) {
-        _headers["Range"] = "bytes=" + QByteArray::number(_resumeStart) + '-';
-        _headers["Accept-Ranges"] = "bytes";
         qCDebug(lcGetJob) << "Retry with range " << _headers["Range"];
     }
 
+    minio::s3::BaseUrl base_url(_account->url().toString().toStdString());
+    auto creds = _account->credentials();
+
+    qCDebug(lcGetJob) << "user" << creds->user();
+    // qCDebug(lcFolderWizard) << "password" << creds->password();
+
+    minio::creds::StaticProvider provider(creds->user().toStdString(), creds->password().toStdString());
+
+    minio::s3::Client client(base_url, &provider);
+
+    // Create download object arguments.
+    minio::s3::DownloadObjectArgs downloadArgs;
+    downloadArgs.bucket = bucket.toStdString();
+    downloadArgs.object = object.toStdString();
+    downloadArgs.filename = tmpFile.toStdString();
+    downloadArgs.overwrite = true;
+
+    // Call download object.
+    minio::s3::DownloadObjectResponse downloadResponse = client.DownloadObject(downloadArgs);
+
+    // Handle response.
+    if (downloadResponse) {
+        qCInfo(lcGetJob) << "successfully downloaded to" << tmpFile;
+    } else {
+        qCInfo(lcGetJob) << "unable to download" << QString::fromUtf8(downloadResponse.Error().String().c_str());
+    }    
+
+    minio::s3::StatObjectArgs statArgs;
+    statArgs.bucket = bucket.toStdString();
+    statArgs.object = object.toStdString();
+    minio::s3::StatObjectResponse statResponse = client.StatObject(statArgs);
+
+    if (statResponse) {
+        qCDebug(lcGetJob) << "etag:" << QString::fromStdString(statResponse.etag);
+        qCDebug(lcGetJob) << "size:" << statResponse.size;
+        qCDebug(lcGetJob) << "last modified:" << statResponse.last_modified;
+
+        _etag = QString::fromUtf8(statResponse.etag.c_str());
+        _lastModified = std::mktime(statResponse.last_modified.ToUTC());
+    } else {
+        qCInfo(lcGetJob) << "unable to get info for" << QString::fromUtf8(statResponse.Error().String().c_str());
+    }
+
+/*
     QNetworkRequest req;
     for (auto it = _headers.cbegin(); it != _headers.cend(); ++it) {
         req.setRawHeader(it.key(), it.value());
     }
 
     sendRequest("GET", req);
+*/
 
     qCDebug(lcGetJob) << _bandwidthManager << _bandwidthChoked << _bandwidthLimited;
     if (_bandwidthManager) {
         _bandwidthManager->registerDownloadJob(this);
     }
-    AbstractNetworkJob::start();
+
+    // emit finishedSignal(AbstractNetworkJob::QPrivateSignal());
+    Q_EMIT finishedSignal({});
+    deleteLater();
 }
 
 void GETFileJob::finished()
@@ -203,11 +271,11 @@ void GETFileJob::finished()
     if (_bandwidthManager) {
         _bandwidthManager->unregisterDownloadJob(this);
     }
-    if (reply()->bytesAvailable() && _httpOk) {
-        // we were throttled, write out the remaining data
-        slotReadyRead();
-        Q_ASSERT(!reply()->bytesAvailable());
-    }
+//    if (reply()->bytesAvailable() && _httpOk) {
+//        // we were throttled, write out the remaining data
+//        slotReadyRead();
+//        Q_ASSERT(!reply()->bytesAvailable());
+//    }
 }
 
 void GETFileJob::newReplyHook(QNetworkReply *reply)
@@ -676,9 +744,12 @@ void PropagateDownloadFile::slotGetFinished()
     GETFileJob *job = _job;
     OC_ASSERT(job);
 
+//    _item->_responseTimeStamp = job->responseTimestamp();
+//    _item->_requestId = job->requestId();
+
+    // todo: Rok Jaklic check for errors or something
+    /*
     _item->_httpErrorCode = job->reply()->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-    _item->_responseTimeStamp = job->responseTimestamp();
-    _item->_requestId = job->requestId();
 
     QNetworkReply::NetworkError err = job->reply()->error();
     if (err != QNetworkReply::NoError) {
@@ -746,6 +817,7 @@ void PropagateDownloadFile::slotGetFinished()
         done(status, errorString);
         return;
     }
+    */
 
     if (!job->etag().isEmpty()) {
         // The etag will be empty if we used a direct download URL.
@@ -753,6 +825,8 @@ void PropagateDownloadFile::slotGetFinished()
         Q_ASSERT(job->etag() == Utility::normalizeEtag(job->etag()));
         _item->_etag = job->etag();
     }
+
+    // todo Rok Jaklic get proper last modified time
     if (job->lastModified()) {
         // It is possible that the file was modified on the server since we did the discovery phase
         // so make sure we have the up-to-date time
@@ -762,81 +836,18 @@ void PropagateDownloadFile::slotGetFinished()
     _tmpFile.close();
     _tmpFile.flush();
 
-    /* Check that the size of the GET reply matches the file size. There have been cases
-     * reported that if a server breaks behind a proxy, the GET is still a 200 but is
-     * truncated, as described here: https://github.com/owncloud/mirall/issues/2528
-     */
-    const QByteArray sizeHeader("Content-Length");
-    qint64 bodySize = job->reply()->rawHeader(sizeHeader).toLongLong();
-    bool hasSizeHeader = !job->reply()->rawHeader(sizeHeader).isEmpty();
-
-    // Qt removes the content-length header for transparently decompressed HTTP1 replies
-    // but not for HTTP2 or SPDY replies. For these it remains and contains the size
-    // of the compressed data. See QTBUG-73364.
-    const auto contentEncoding = job->reply()->rawHeader("content-encoding").toLower();
-    if ((contentEncoding == "gzip" || contentEncoding == "deflate") && (job->reply()->attribute(QNetworkRequest::Http2WasUsedAttribute).toBool())) {
-        bodySize = 0;
-        hasSizeHeader = false;
-    }
-
-    if (hasSizeHeader && _tmpFile.size() > 0 && bodySize == 0) {
-        // Strange bug with broken webserver or webfirewall https://github.com/owncloud/client/issues/3373#issuecomment-122672322
-        // This happened when trying to resume a file. The Content-Range header was files, Content-Length was == 0
-        qCDebug(lcPropagateDownload) << bodySize << _item->_size << _tmpFile.size() << job->resumeStart();
-        FileSystem::remove(_tmpFile.fileName());
-        done(SyncFileItem::SoftError, tr("Broken webserver returned empty content length for non-empty file on resume"));
-        return;
-    }
-
-    if (bodySize > 0 && (bodySize != (_tmpFile.size() - job->resumeStart()))) {
-        qCDebug(lcPropagateDownload) << bodySize << "!=" << (_tmpFile.size() - job->resumeStart()) << _tmpFile.size() << job->resumeStart();
-        propagator()->_anotherSyncNeeded = true;
-        done(SyncFileItem::SoftError, tr("The file could not be downloaded completely."));
-        return;
-    }
-
-    if (_tmpFile.size() == 0 && _item->_size > 0) {
-        FileSystem::remove(_tmpFile.fileName());
-        done(SyncFileItem::NormalError,
-            tr("The downloaded file is empty despite the server announced it should have been %1.")
-                .arg(Utility::octetsToString(_item->_size)));
-        return;
-    }
-
-    // Did the file come with conflict headers? If so, store them now!
-    // If we download conflict files but the server doesn't send conflict
-    // headers, the record will be established by SyncEngine::conflictRecordMaintenance.
-    // (we can't reliably determine the file id of the base file here,
-    // it might still be downloaded in a parallel job and not exist in
-    // the database yet!)
-    if (job->reply()->rawHeader("OC-Conflict") == "1") {
-        _conflictRecord.path = _item->_file.toUtf8();
-        _conflictRecord.initialBasePath = job->reply()->rawHeader("OC-ConflictInitialBasePath");
-        _conflictRecord.baseFileId = job->reply()->rawHeader("OC-ConflictBaseFileId");
-        _conflictRecord.baseEtag = job->reply()->rawHeader("OC-ConflictBaseEtag");
-
-        auto mtimeHeader = job->reply()->rawHeader("OC-ConflictBaseMtime");
-        if (!mtimeHeader.isEmpty())
-            _conflictRecord.baseModtime = mtimeHeader.toLongLong();
-
-        // We don't set it yet. That will only be done when the download finished
-        // successfully, much further down. Here we just grab the headers because the
-        // job will be deleted later.
-    }
-
-    // Do checksum validation for the download. If there is no checksum header, the validator
+    // Do checksum validation for the download. For S3 this is an Etag.
+    // If there is no checksum header, the validator
     // will also emit the validated() signal to continue the flow in slot transmissionChecksumValidated()
     // as this is (still) also correct.
-    ValidateChecksumHeader *validator = new ValidateChecksumHeader(this);
-    connect(validator, &ValidateChecksumHeader::validated,
-        this, &PropagateDownloadFile::transmissionChecksumValidated);
-    connect(validator, &ValidateChecksumHeader::validationFailed,
-        this, &PropagateDownloadFile::slotChecksumFail);
-    auto checksumHeader = findBestChecksum(job->reply()->rawHeader(checkSumHeaderC));
-    auto contentMd5Header = job->reply()->rawHeader(contentMd5HeaderC);
-    if (checksumHeader.isEmpty() && !contentMd5Header.isEmpty())
-        checksumHeader = "MD5:" + contentMd5Header;
-    validator->start(_tmpFile.fileName(), checksumHeader);
+    // ValidateChecksumHeader *validator = new ValidateChecksumHeader(this);
+//    connect(validator, &ValidateChecksumHeader::validated,
+//        this, &PropagateDownloadFile::transmissionChecksumValidated);
+//    connect(validator, &ValidateChecksumHeader::validationFailed,
+//        this, &PropagateDownloadFile::slotChecksumFail);
+//    validator->start(_tmpFile.fileName(), checksumHeader);
+
+    PropagateDownloadFile::downloadFinished();
 }
 
 void PropagateDownloadFile::slotChecksumFail(const QString &errMsg)

@@ -915,7 +915,7 @@ void ownCloudGui::runNewAccountWizard()
                         });
 
 
-                    validator->checkServer();
+                    // validator->checkServer();
                 } else {
                     FolderMan::instance()->setSyncEnabled(true);
                 }

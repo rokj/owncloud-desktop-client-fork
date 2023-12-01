@@ -1,3 +1,6 @@
+set(Qt6Core_DIR /usr/lib/x86_64-linux-gnu/cmake/Qt6Core)
+find_package(Qt6Core REQUIRED)
+
 if(WITH_CRASHREPORTER)
     find_package(CrashReporterQt REQUIRED)
 endif()

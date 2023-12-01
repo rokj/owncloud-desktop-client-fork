@@ -68,6 +68,7 @@ public slots:
 
 protected slots:
     void slotAddFolder();
+    void slotRefreshRemoteBuckets();
     void slotEnableCurrentFolder(bool terminate = false);
     void slotScheduleCurrentFolder();
     void slotScheduleCurrentFolderForceFullDiscovery();
