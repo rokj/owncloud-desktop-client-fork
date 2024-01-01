@@ -1,18 +1,15 @@
-# ownCloud Desktop Client
-
-[![Build Status](https://drone.owncloud.com/api/badges/owncloud/client/status.svg)](https://drone.owncloud.com/owncloud/client) [![Build Status](https://github.com/owncloud/client/workflows/ownCloud%20CI/badge.svg)](https://github.com/owncloud/client/actions)
-
+# Stree Desktop Client
 
 ## Introduction
 
-The ownCloud Desktop Client is a tool to synchronize files from ownCloud Server
-with your computer.
+The Stree Desktop Client is a tool to synchronize files from S3 endpoint
+with your computer. It based/fork of https://github.com/owncloud/client/
 
-## Download
+Work in progress.
 
-### Binary packages
+---- 
 
-* Refer to the download page https://owncloud.com/desktop-app/
+Following if from owncloud ...
 
 ### Source code
 
