@@ -85,6 +85,7 @@ bool SqlDatabase::openHelper(const QString &filename, int sqliteFlags)
 #else
     char *vfs = nullptr;
 #endif
+    qCDebug(lcSql) << "Will try to open db file:" << filename;
     SQLITE_DO(sqlite3_open_v2(FileSystem::longWinPath(filename).toUtf8().constData(), &_db, sqliteFlags, vfs));
 
     if (_errId != SQLITE_OK) {

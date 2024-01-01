@@ -477,6 +477,10 @@ QUrl Utility::concatUrlPath(const QUrl &url, const QString &concatPath,
         }
         path += concatPath; // put the complete path together
     }
+    // path.replace(QLatin1Char('//'), QLatin1Char('/'));
+
+    qCDebug(lcUtility) << "concat url path" << path;
+
     Q_ASSERT(!path.contains(QStringLiteral("//")));
     Q_ASSERT(url.query().isEmpty());
     QUrl tmpUrl = url;

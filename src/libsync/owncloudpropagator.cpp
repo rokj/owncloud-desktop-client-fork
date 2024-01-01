@@ -1269,7 +1269,9 @@ void PropagateRootDirectory::addDeleteJob(PropagatorJob *job)
 QString OwncloudPropagator::fullRemotePath(const QString &tmp_file_name) const
 {
     // TODO: should this be part of the _item (SyncFileItemPtr)?
-    return _remoteFolder + tmp_file_name;
+    // todo Rok Jaklic removed _remoteFolder
+    // return _remoteFolder + tmp_file_name;
+    return tmp_file_name;
 }
 
 QString OwncloudPropagator::remotePath() const

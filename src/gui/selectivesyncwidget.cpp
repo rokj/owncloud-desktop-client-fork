@@ -183,16 +183,12 @@ void SelectiveSyncWidget::slotUpdateDirectories(QStringList list)
 
     const QString rootPath = Utility::ensureTrailingSlash(Utility::concatUrlPath(davUrl(), _folderPath).path());
 
-    std::cout << "size before erase " << list.size() << std::endl;
-    std::cout << "rootPath " << rootPath.toStdString() << std::endl;
     // Check for excludes.
     list.erase(std::remove_if(list.begin(), list.end(),
                    [&rootPath, this](const QString &it) {
                        return _excludedFiles.isExcludedRemote(it, rootPath, FolderMan::instance()->ignoreHiddenFiles(), ItemTypeDirectory);
                    }),
         list.end());
-
-    std::cout << "size after erase " << list.size() << std::endl;
 
     for (const auto& i : list)
     {
@@ -257,8 +253,6 @@ void SelectiveSyncWidget::slotUpdateDirectories(QStringList list)
             break;
         }
     }
-
-    std::cout << root->childCount() << std::endl;
 
     root->setExpanded(true);
 }

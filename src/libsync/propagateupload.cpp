@@ -14,6 +14,7 @@
 
 #include "propagateupload.h"
 #include "account.h"
+#include "creds/abstractcredentials.h"
 #include "filesystem.h"
 #include "networkjobs.h"
 #include "owncloudpropagator_p.h"
@@ -26,6 +27,7 @@
 #include "common/syncjournaldb.h"
 #include "common/syncjournalfilerecord.h"
 #include "common/utility.h"
+#include <minio-cpp/include/client.h>
 
 #include "libsync/theme.h"
 
@@ -66,13 +68,13 @@ static bool fileIsStillChanging(const SyncFileItem &item)
         && secondsSinceMod > -1s;
 }
 
-PUTFileJob::PUTFileJob(AccountPtr account, const QUrl &url, const QString &path, std::unique_ptr<QIODevice> &&device, const QMap<QByteArray, QByteArray> &headers, int chunk, QObject *parent)
+PUTFileJob::PUTFileJob(AccountPtr account, const QUrl &url, const QString &path, const QString &fileName, const QMap<QByteArray, QByteArray> &headers, int chunk, QObject *parent)
     : AbstractNetworkJob(account, url, path, parent)
-    , _device(device.release())
     , _headers(headers)
     , _chunk(chunk)
 {
-    _device->setParent(this);
+    _fileName = fileName;
+    // _device->setParent(this);
     // Long uploads must not block non-propagation jobs.
     setPriority(QNetworkRequest::LowPriority);
 }
@@ -83,13 +85,74 @@ PUTFileJob::~PUTFileJob()
 
 void PUTFileJob::start()
 {
-    QNetworkRequest req;
-    for (auto it = _headers.cbegin(); it != _headers.cend(); ++it) {
-        req.setRawHeader(it.key(), it.value());
-    }
-    sendRequest("PUT", req, _device);
     _requestTimer.start();
     AbstractNetworkJob::start();
+
+    QString fullUrl = url().toString();
+
+    qCDebug(lcPutJob) << "will try upload file " << _fileName;
+    qCDebug(lcPutJob) << "will try upload to" << url().toString();
+
+    QString serverUrl = _account->url().toString();
+    QStringList splittedUrl = fullUrl.replace(serverUrl, QStringLiteral("")).split(QStringLiteral("/"));
+
+    // todo: Rok Jaklic refactor
+    if (splittedUrl.size() <= 1) {
+        qCDebug(lcPutJob) << "could not split url to get bucket";
+    }
+    const QString bucket = splittedUrl[1];
+    const QString replaceString = serverUrl + QStringLiteral("/") + bucket;
+    const QString object = url().toString().replace(replaceString, QStringLiteral(""));
+
+    qCDebug(lcPutJob) << "using bucket" << bucket;
+    qCDebug(lcPutJob) << "using object" << object;
+
+    minio::s3::BaseUrl base_url(_account->url().toString().toStdString());
+
+    auto creds = _account->credentials();
+    qCDebug(lcPutJob) << "user" << creds->user();
+
+    minio::creds::StaticProvider provider(creds->user().toStdString(), creds->password().toStdString());
+    minio::s3::Client client(base_url, &provider);
+
+    minio::s3::UploadObjectArgs args;
+    args.bucket = bucket.toStdString();
+    args.object = object.toStdString();
+    args.filename = _fileName.toStdString();
+
+    minio::s3::UploadObjectResponse resp = client.UploadObject(args);
+
+    if (resp) {
+        qCInfo(lcPutJob) << "successfully uploaded to" << url().toString();
+
+    } else {
+        qCInfo(lcPutJob) << "unable to upload file" << _fileName << "to" << url().toString();
+    }
+
+    minio::s3::StatObjectArgs statArgs;
+    statArgs.bucket = bucket.toStdString();
+    statArgs.object = object.toStdString();
+    minio::s3::StatObjectResponse statResponse = client.StatObject(statArgs);
+
+    if (statResponse) {
+        qCDebug(lcPutJob) << "size:" << statResponse.size;
+        qCDebug(lcPutJob) << "last modified:" << statResponse.last_modified;
+
+        _lastModified = std::mktime(statResponse.last_modified.ToUTC());
+    } else {
+        qCInfo(lcPutJob) << "unable to get info for" << QString::fromUtf8(statResponse.Error().String().c_str());
+    }
+
+    QUrl baseUrl;
+    QString subPath;
+
+    auto job = new MinioJob(_account, baseUrl, subPath, MinioJob::Depth::One, this);
+    auto etag = job->updateRLMDatetime(bucket.toStdString(), object.toStdString());
+
+    _etag = QString::fromStdString(etag);
+
+    Q_EMIT finishedSignal({});
+    deleteLater();
 }
 
 void PUTFileJob::finished()
@@ -142,16 +205,15 @@ void PropagateUploadFileCommon::start()
 
     propagator()->_activeJobList.append(this);
 
-    // Todo: Rok Jaklic
-//    if (!_deleteExisting) {
-//        return slotComputeContentChecksum();
-//    }
+    if (!_deleteExisting) {
+        return slotComputeContentChecksum();
+    }
 
     auto job = new DeleteJob(propagator()->account(), propagator()->webDavUrl(),
         propagator()->fullRemotePath(_item->_file),
         this);
     addChildJob(job);
-    // connect(job, &DeleteJob::finishedSignal, this, &PropagateUploadFileCommon::slotComputeContentChecksum);
+    connect(job, &DeleteJob::finishedSignal, this, &PropagateUploadFileCommon::slotComputeContentChecksum);
     job->start();
 }
 
@@ -575,18 +637,18 @@ void PropagateUploadFileCommon::finalize()
         _quotaUpdated = true;
     }
 
-    if (_item->_remotePerm.isNull()) {
-        qCWarning(lcPropagateUpload) << "PropagateUploadFileCommon::finalize: Missing permissions for" << propagator()->fullRemotePath(_item->_file);
-        auto permCheck = new PropfindJob(propagator()->account(), propagator()->webDavUrl(), propagator()->fullRemotePath(_item->_file), PropfindJob::Depth::Zero, this);
-        addChildJob(permCheck);
-        permCheck->setProperties({ "http://owncloud.org/ns:permissions" });
-        connect(permCheck, &PropfindJob::directoryListingIterated, this, [this](const QString &, const QMap<QString, QString> &map) {
-            _item->_remotePerm = RemotePermissions::fromServerString(map.value(QStringLiteral("permissions")));
-            finalize();
-        });
-        permCheck->start();
-        return;
-    }
+//    if (_item->_remotePerm.isNull()) {
+//        qCWarning(lcPropagateUpload) << "PropagateUploadFileCommon::finalize: Missing permissions for" << propagator()->fullRemotePath(_item->_file);
+//        auto permCheck = new PropfindJob(propagator()->account(), propagator()->webDavUrl(), propagator()->fullRemotePath(_item->_file), PropfindJob::Depth::Zero, this);
+//        addChildJob(permCheck);
+//        permCheck->setProperties({ "http://owncloud.org/ns:permissions" });
+//        connect(permCheck, &PropfindJob::directoryListingIterated, this, [this](const QString &, const QMap<QString, QString> &map) {
+//            _item->_remotePerm = RemotePermissions::fromServerString(map.value(QStringLiteral("permissions")));
+//            finalize();
+//        });
+//        permCheck->start();
+//        return;
+//    }
 
     // Update the database entry
     const auto result = propagator()->updateMetadata(*_item);

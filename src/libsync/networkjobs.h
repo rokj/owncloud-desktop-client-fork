@@ -135,14 +135,22 @@ public:
     void setProperties(const QList<QByteArray> &properties);
     QList<QByteArray> properties() const;
 
+    minio::s3::GetObjectTagsResponse getObjectTags(const std::string &bucket, const std::string &object);
+    minio::s3::GetObjectTagsResponse setObjectTag(const std::string &bucket, const std::string &name, const std::string &key, const std::string &value, const bool createIfNoKey);
+    std::string getObjectTag(const std::string &bucket, const std::string &name, const std::string &key);
+    minio::s3::GetBucketTagsResponse setBucketTag(const std::string &bucket, const std::string &key, const std::string &value);
+    std::string getBucketTag(const std::string &bucket, const std::string &key);
+    std::string getOrUpdateAndGetRLMDatetime(const std::string &bucket, const std::string &name);
+    std::string updateRLMDatetime(const std::string &bucket, const std::string &name);
+
     // TODO: document...
-    const QHash<QString, qint64> &sizes() const;
+    const QHash<QString, qint64> &sizes() const;    
 
 signals:
     void directoryListingSubfolders(const QStringList &items);
     void directoryListingIterated(const QString &name, const QMap<QString, QString> &properties);
     void directoryListingIteratedS3(const minio::s3::Item &item, const QMap<QString, QString> &properties);
-    void finishedWithError(QNetworkReply *reply);
+    void finishedWithError(QString);
     void finishedWithoutError();
 
 private slots:

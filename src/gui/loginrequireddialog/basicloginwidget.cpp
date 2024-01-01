@@ -45,6 +45,9 @@ BasicLoginWidget::BasicLoginWidget(QWidget *parent)
     _ui->passwordLabel->setText(tr("Secret Key"));
     _ui->usernameLineEdit->setPlaceholderText(usernameLabelText);
 
+    _ui->usernameLineEdit->setText(tr("D0RSOVG4H9B4FGN847GD"));
+    _ui->passwordLineEdit->setText(tr("2hNNhVPjsMYYvIz4KT7hbNCnFLVyzTAKvv7Tk7C3"));
+
     if (!Theme::instance()->userIDHint().isEmpty()) {
         _ui->usernameLineEdit->setPlaceholderText(Theme::instance()->userIDHint());
     }

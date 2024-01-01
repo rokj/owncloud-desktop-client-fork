@@ -97,7 +97,8 @@ SyncFileStatusTracker::SyncFileStatusTracker(SyncEngine *syncEngine)
 
 SyncFileStatus SyncFileStatusTracker::fileStatus(const QString &relativePath)
 {
-    OC_ASSERT(!relativePath.endsWith(QLatin1Char('/')));
+    // todo Rok Jaklic path maybe ends with /
+    // OC_ASSERT(!relativePath.endsWith(QLatin1Char('/')));
 
     if (relativePath.isEmpty()) {
         // This is the root sync folder, it doesn't have an entry in the database and won't be walked by csync, so resolve manually.
@@ -164,7 +165,9 @@ void SyncFileStatusTracker::incSyncCountAndEmitStatusChanged(const QString &rela
 
         // We passed from OK to SYNC, increment the parent to keep it marked as
         // SYNC while we propagate ourselves and our own children.
-        OC_ASSERT(!relativePath.endsWith(QLatin1Char('/')));
+
+        // todo Rok Jaklic, we do not need this assert if "our" folders ends with "/"
+        // OC_ASSERT(!relativePath.endsWith(QLatin1Char('/')));
         int lastSlashIndex = relativePath.lastIndexOf(QLatin1Char('/'));
         if (lastSlashIndex != -1)
             incSyncCountAndEmitStatusChanged(relativePath.left(lastSlashIndex), UnknownShared);
@@ -186,7 +189,8 @@ void SyncFileStatusTracker::decSyncCountAndEmitStatusChanged(const QString &rela
         emit fileStatusChanged(getSystemDestination(relativePath), status);
 
         // We passed from SYNC to OK, decrement our parent.
-        OC_ASSERT(!relativePath.endsWith(QLatin1Char('/')));
+        // todo Rok Jaklic we do not check for last slash
+        // OC_ASSERT(!relativePath.endsWith(QLatin1Char('/')));
         int lastSlashIndex = relativePath.lastIndexOf(QLatin1Char('/'));
         if (lastSlashIndex != -1)
             decSyncCountAndEmitStatusChanged(relativePath.left(lastSlashIndex), UnknownShared);

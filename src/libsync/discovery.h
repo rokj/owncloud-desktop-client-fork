@@ -113,7 +113,9 @@ private:
         QString _local; // Path locally (before the sync)
         static QString pathAppend(const QString &base, const QString &name)
         {
-            return base.isEmpty() ? name : base + QLatin1Char('/') + name;
+            // return base.isEmpty() ? name : base + QLatin1Char('/') + name;
+            // todo Rok Jaklic do not know what we are doing here, but anyway
+            return name;
         }
         PathTuple addName(const QString &name) const
         {

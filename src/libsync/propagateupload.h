@@ -98,15 +98,19 @@ private:
     QElapsedTimer _requestTimer;
 
 public:
-    explicit PUTFileJob(AccountPtr account, const QUrl &url, const QString &path, std::unique_ptr<QIODevice> &&device,
+    explicit PUTFileJob(AccountPtr account, const QUrl &url, const QString &path, const QString &fileName,
         const HeaderMap &headers, int chunk, QObject *parent = nullptr);
     ~PUTFileJob() override;
 
     int _chunk;
 
+    QString _fileName;
+
     void start() override;
 
     void finished() override;
+
+    QString &etag() { return _etag; }
 
     QIODevice *device()
     {
@@ -125,6 +129,8 @@ public:
 
 protected:
     void newReplyHook(QNetworkReply *reply) override;
+    QString _etag;
+    time_t _lastModified = 0;
 
 signals:
     void uploadProgress(qint64, qint64);

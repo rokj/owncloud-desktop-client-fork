@@ -1,7 +1,7 @@
 #include "serverurlsetupwizardpage.h"
 #include "ui_serverurlsetupwizardpage.h"
 
-#include "theme.h"https://ftp.fau.de/fosdem/2021/D.sds/sds_ceph_rgw_serverless.mp4
+#include "theme.h"
 
 #include <QIcon>
 
@@ -13,7 +13,7 @@ ServerUrlSetupWizardPage::ServerUrlSetupWizardPage(const QUrl &serverUrl)
 {
     _ui->setupUi(this);
 
-    _ui->welcomeTextLabel->setText(tr("Pozdravljeni v Arnes Mapa"));
+    _ui->welcomeTextLabel->setText(tr("Stree"));
 
     // not the best style, but we hacked such branding into the pages elsewhere, too
     if (!Theme::instance()->overrideServerUrlV2().isEmpty()) {
@@ -29,6 +29,8 @@ ServerUrlSetupWizardPage::ServerUrlSetupWizardPage(const QUrl &serverUrl)
             _ui->urlLineEdit->setFocus();
         });
     }
+
+    // _ui->urlLineEdit->setText(tr(""));
 
     _ui->logoLabel->setText(QString());
     _ui->logoLabel->setPixmap(Theme::instance()->wizardHeaderLogo().pixmap(200, 200));

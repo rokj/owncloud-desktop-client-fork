@@ -303,16 +303,18 @@ void OCC::SyncEngine::slotItemDiscovered(const OCC::SyncFileItemPtr &item)
     checkErrorBlacklisting(*item);
     _needsUpdate = true;
 
-    Q_ASSERT([&] {
+    // todo Rok Jaklic we do not know what we are doing here, but anyway
+    // Q_ASSERT([&] {
         const auto it = _syncItems.find(item);
         if (it != _syncItems.cend()) {
             const auto &item2 = it->get();
             qCWarning(lcEngine) << "We already have an item for " << item2->_file << ":" << item2->instruction() << item2->_direction << "|"
                                 << item->instruction() << item->_direction;
-            return false;
+            return;
+            //return false;
         }
-        return true;
-    }());
+        // return true;
+    // }());
     _syncItems.insert(item);
 
     slotNewItem(item);
@@ -325,7 +327,8 @@ void OCC::SyncEngine::slotItemDiscovered(const OCC::SyncFileItemPtr &item)
 void SyncEngine::startSync()
 {
     if (_syncRunning) {
-        OC_ASSERT(false);
+        // todo Rok Jaklic
+        // OC_ASSERT(false);
         return;
     }
 

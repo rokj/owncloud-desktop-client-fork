@@ -180,6 +180,15 @@ GETFileJob::GETFileJob(AccountPtr account, const QUrl &url, const QString &path,
 
 void GETFileJob::start()
 {
+    /*
+    QNetworkRequest req;
+    for (auto it = _headers.cbegin(); it != _headers.cend(); ++it) {
+        req.setRawHeader(it.key(), it.value());
+    }
+
+    sendRequest("GET", req);
+    */
+
     QString fullUrl = url().toString();
     QString tmpFile = qobject_cast<QFile *>(_device)->fileName();
 
@@ -237,24 +246,38 @@ void GETFileJob::start()
     minio::s3::StatObjectResponse statResponse = client.StatObject(statArgs);
 
     if (statResponse) {
-        qCDebug(lcGetJob) << "etag:" << QString::fromStdString(statResponse.etag);
         qCDebug(lcGetJob) << "size:" << statResponse.size;
         qCDebug(lcGetJob) << "last modified:" << statResponse.last_modified;
 
-        _etag = QString::fromUtf8(statResponse.etag.c_str());
         _lastModified = std::mktime(statResponse.last_modified.ToUTC());
     } else {
         qCInfo(lcGetJob) << "unable to get info for" << QString::fromUtf8(statResponse.Error().String().c_str());
     }
 
-/*
-    QNetworkRequest req;
-    for (auto it = _headers.cbegin(); it != _headers.cend(); ++it) {
-        req.setRawHeader(it.key(), it.value());
+    QUrl baseUrl;
+    QString subPath;
+
+    auto job = new MinioJob(_account, baseUrl, subPath, MinioJob::Depth::One, this);
+    minio::s3::GetObjectTagsResponse getObjectTagsResponse = job->getObjectTags(bucket.toStdString(), object.toStdString());
+
+    if (getObjectTagsResponse) {
+        for (auto& [key, value] : getObjectTagsResponse.tags) {
+            if (key == "rlm_datetime") {
+                _etag = QString::fromStdString(value);
+                break;
+            }
+            qCDebug(lcGetJob) << "Tag: Key:" << QString::fromStdString(key) << ", " << "Value:" << QString::fromStdString(value);
+        }
+
+        if (_etag.toStdString() == "") {
+            qCDebug(lcGetJob) << "item.etag not set for bucket" << bucket << "and object" << object << "so we gonna set it to current datetime";
+            std::string stdEtag = job->getOrUpdateAndGetRLMDatetime(bucket.toStdString(), object.toStdString());
+            _etag = QString::fromStdString(stdEtag);
+        }
     }
 
-    sendRequest("GET", req);
-*/
+    qCDebug(lcGetJob) << "ETag: " << _etag;
+    qCDebug(lcGetJob) << "---";
 
     qCDebug(lcGetJob) << _bandwidthManager << _bandwidthChoked << _bandwidthLimited;
     if (_bandwidthManager) {
@@ -647,6 +670,13 @@ void PropagateDownloadFile::startDownload()
     // file writable if it exists.
     if (_tmpFile.exists())
         FileSystem::setFileReadOnly(_tmpFile.fileName(), false);
+
+    QString dirPath = QFileInfo(_tmpFile.fileName()).absolutePath();
+    // Create the directory and its parent directories if they don't exist
+    if (QDir().mkpath(dirPath)) {
+        qCInfo(lcPropagateDownload) << "directory" << dirPath << "created successfully";
+    }
+
     if (!_tmpFile.open(QIODevice::Append | QIODevice::Unbuffered)) {
         qCWarning(lcPropagateDownload) << "could not open temporary file" << _tmpFile.fileName();
         done(SyncFileItem::NormalError, _tmpFile.errorString());

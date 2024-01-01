@@ -141,6 +141,12 @@ void FolderWizardRemotePath::slotHandleLsColNetworkError(QNetworkReply *reply)
                  .arg(job->errorStringParsingBody()));
 }
 
+// todo Rok Jaklic pass error as pointer maybe
+void FolderWizardRemotePath::slotHandleMinioNetworkError(QString error)
+{
+    showWarn(tr("Failed to list a folder. Error: %1").arg(error));
+}
+
 static QTreeWidgetItem *findFirstChild(QTreeWidgetItem *parent, const QString &text)
 {
     for (int i = 0; i < parent->childCount(); ++i) {
@@ -252,7 +258,7 @@ void FolderWizardRemotePath::slotItemExpanded(QTreeWidgetItem *item)
         dir.prepend(QLatin1Char('/'));
     }
 
-    minioJob(dir);
+    // minioJob(dir);
 }
 
 void FolderWizardRemotePath::slotCurrentItemChanged(QTreeWidgetItem *item)
@@ -314,6 +320,19 @@ PropfindJob *FolderWizardRemotePath::runPropFindJob(const QString &path)
 
 void FolderWizardRemotePath::minioJob(const QString &path)
 {
+    MinioJob *job = new MinioJob(folderWizardPrivate()->accountState()->account(), folderWizardPrivate()->davUrl(), path, MinioJob::Depth::One, this);
+    connect(job, &MinioJob::directoryListingSubfolders,
+        this, &FolderWizardRemotePath::slotUpdateDirectories);
+    connect(job, &MinioJob::finishedWithError,
+        this, &FolderWizardRemotePath::slotHandleMinioNetworkError);
+    job->start();
+
+    // return job;
+}
+
+/*
+void FolderWizardRemotePath::minioJob(const QString &path)
+{
     qCDebug(lcFolderWizard) << "doing path" << path;
 
     QList<QString> bucketList;
@@ -360,6 +379,7 @@ void FolderWizardRemotePath::minioJob(const QString &path)
     }
     root->setExpanded(true);
 }
+*/
 
 FolderWizardRemotePath::~FolderWizardRemotePath()
 {

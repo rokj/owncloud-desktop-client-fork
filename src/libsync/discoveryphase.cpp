@@ -108,6 +108,9 @@ void DiscoveryPhase::checkSelectiveSyncNewFolder(const QString &path, RemotePerm
     }
 
     // do a PROPFIND to know the size of this folder
+    // todo Rok Jaklic CEPHize getting folder/bucket size or something
+
+    /*
     auto propfindJob = new PropfindJob(_account, _baseUrl, _remoteFolder + path, PropfindJob::Depth::Zero, this);
     propfindJob->setProperties(QList<QByteArray>() << "resourcetype"
                                                    << "http://owncloud.org/ns:size");
@@ -132,6 +135,16 @@ void DiscoveryPhase::checkSelectiveSyncNewFolder(const QString &path, RemotePerm
         }
     });
     propfindJob->start();
+    */
+
+    auto p = path;
+    if (!p.endsWith(QLatin1Char('/')))
+        p += QLatin1Char('/');
+    _selectiveSyncWhiteList.insert(
+        std::upper_bound(_selectiveSyncWhiteList.begin(), _selectiveSyncWhiteList.end(), p),
+        p);
+
+    return callback(false);
 }
 
 /* Given a path on the remote, give the path as it is when the rename is done */
@@ -331,21 +344,26 @@ DiscoverySingleDirectoryJob::DiscoverySingleDirectoryJob(const AccountPtr &accou
     , _isRootPath(false)
     , _isExternalStorage(false)
 {
+    qCDebug(lcDiscovery) << "doing DiscoverySingleDirectoryJob on" << path;
 }
 
 void DiscoverySingleDirectoryJob::start()
 {
-    // Start the actual HTTP job  
+    // Start the actual HTTP job
+    qCDebug(lcDiscovery) << "calling minio job with _baseUrl" << _baseUrl;
+    qCDebug(lcDiscovery) << "calling minio job with _subPath" << _subPath;
+
     _minioJob = new MinioJob(_account, _baseUrl, _subPath, MinioJob::Depth::One, this);
 
     QObject::connect(_minioJob, &MinioJob::directoryListingIteratedS3, this, &DiscoverySingleDirectoryJob::directoryListingIteratedSlotS3);
 
-//    QObject::connect(_minioJob, &MinioJob::directoryListingIterated,
-//        this, &DiscoverySingleDirectoryJob::directoryListingIteratedSlot);
-    // QObject::connect(_proFindJob, &PropfindJob::finishedWithError, this, &DiscoverySingleDirectoryJob::lsJobFinishedWithErrorSlot);
+// QObject::connect(_minioJob, &MinioJob::directoryListingIterated, this, &DiscoverySingleDirectoryJob::directoryListingIteratedSlot);
+// QObject::connect(_proFindJob, &PropfindJob::finishedWithError, this, &DiscoverySingleDirectoryJob::lsJobFinishedWithErrorSlot);
+
     QObject::connect(_minioJob, &MinioJob::finishedWithoutError, this, &DiscoverySingleDirectoryJob::lsJobFinishedWithoutErrorSlot);
     _minioJob->start();
-    std::cout << "im finshed with starting minio job" << std::endl;
+
+    qCDebug(lcDiscovery) << "im finished with starting minio job";
 }
 
 void DiscoverySingleDirectoryJob::abort()
@@ -449,16 +467,22 @@ void DiscoverySingleDirectoryJob::directoryListingIteratedSlotS3(const minio::s3
 {
     RemoteInfo result;
 
+    // todo Rok Jaklic
     const QString name = QString::fromUtf8(item.name.data(), item.name.size());
-    int slash = name.lastIndexOf(QLatin1Char('/'));
-    result.name = name.mid(slash + 1);
+    // int slash = name.lastIndexOf(QLatin1Char('/'));
+
+    result.name = name;
     result.size = item.size;
     result.etag = QString::fromUtf8(item.etag.data(), item.etag.size());
     const bool isDirectory = (item.is_prefix && item.size == 0) ? true : false;
     // propertyMapToRemoteInfo(map, result);
 
-    if (isDirectory)
+    if (isDirectory) {
         result.size = 0;
+        result.isDirectory = true;
+    }
+
+    result.modtime = item.last_modified;
 
     if (_isExternalStorage && result.remotePerm.hasPermission(RemotePermissions::IsMounted)) {
         /* All the entries in a external storage have 'M' in their permission. However, for all
@@ -469,12 +493,12 @@ void DiscoverySingleDirectoryJob::directoryListingIteratedSlotS3(const minio::s3
     }
     _results.push_back(std::move(result));
 
-           //This works in concerto with the RequestEtagJob and the Folder object to check if the remote folder changed.
-    if (_firstEtag.isEmpty()) {
-        //                if (auto it = Utility::optionalFind(map, QStringLiteral("getetag"))) {
-        //                    _firstEtag = Utility::normalizeEtag(it->value()); // for directory itself
-        //                }
-    }
+    //This works in concerto with the RequestEtagJob and the Folder object to check if the remote folder changed.
+//    if (_firstEtag.isEmpty()) {
+//        if (auto it = Utility::optionalFind(map, QStringLiteral("getetag"))) {
+//            _firstEtag = Utility::normalizeEtag(it->value()); // for directory itself
+//        }
+//    }
 }
 
 void DiscoverySingleDirectoryJob::lsJobFinishedWithoutErrorSlot()

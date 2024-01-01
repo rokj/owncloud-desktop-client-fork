@@ -56,105 +56,13 @@ Q_LOGGING_CATEGORY(lcAvatarJob, "sync.networkjob.avatar", QtInfoMsg)
 Q_LOGGING_CATEGORY(lcMkColJob, "sync.networkjob.mkcol", QtInfoMsg)
 Q_LOGGING_CATEGORY(lcDetermineAuthTypeJob, "sync.networkjob.determineauthtype", QtInfoMsg)
 
-Q_LOGGING_CATEGORY(lcMinioJob, "sync.networkjob.,miniojob", QtInfoMsg)
+Q_LOGGING_CATEGORY(lcMinioJob, "sync.networkjob.miniojob", QtInfoMsg)
 
 RequestEtagJob::RequestEtagJob(AccountPtr account, const QUrl &rootUrl, const QString &path, QObject *parent) : AbstractNetworkJob(account, rootUrl, path, parent)
 {
     QObject::connect(this, &RequestEtagJob::directoryListingIteratedS3, this, [=](const minio::s3::Item &item, const QMap<QString, QString> &properties) {
         _etag = Utility::normalizeEtag(QString::fromStdString(item.etag));
     });
-}
-
-/**
- *  This method tries to get .datetime-modified object/file from the root of the
- *  bucket. If file .datetime-modified does not exists it gets created.
- *
- *  This is a little hack since we cannot get etag from bucket which would
- *  tells us if bucket was modified or not, so we could update contents
- *  based on that.
- */
-std::string RequestEtagJob::getRootDatetimeModified(const std::string &bucket)
-{
-    std::string datetimeModified = "";
-    qCDebug(lcEtagJob) << "trying to get .datetime-modified from bucket" << bucket.c_str();
-
-    auto creds = _account->credentials();
-
-    qCDebug(lcEtagJob) << "user" << creds->user();
-
-    minio::s3::BaseUrl base_url(_account->url().toString().toStdString());
-    minio::creds::StaticProvider provider(creds->user().toStdString(), creds->password().toStdString());
-    minio::s3::Client client(base_url, &provider);
-
-    // checking if object .datetime-modified exists
-    minio::s3::StatObjectArgs statArgs;
-    statArgs.bucket = bucket;
-    statArgs.object = ".datetime-modified";
-
-    auto rg = QRandomGenerator::global();
-    const QString tmpFileName = QStringLiteral("%1.~%2").arg(QStringLiteral(".datetime-modified"), QString::number(uint(rg->generate() % 0xFFFFFFFF), 16));
-
-    minio::s3::StatObjectResponse statResponse = client.StatObject(statArgs);
-    if (!statResponse) {
-        qCDebug(lcEtagJob) << "unable to get stat object .datetime-modified in bucket " << bucket.c_str() << statResponse.Error().String().c_str();
-        qCDebug(lcEtagJob) << "creating new .datetime-modified";
-
-        QFile tmpFile;
-        tmpFile.setFileName(tmpFileName);
-        if (!tmpFile.open(QIODevice::Append | QIODevice::Unbuffered)) {
-            qCWarning(lcEtagJob) << "could not open temporary file" << tmpFile.fileName();
-            return NULL;
-        }
-
-        const QString now = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
-        const char *charNow = now.toLocal8Bit().constData();
-
-        tmpFile.write(charNow);
-
-        FileSystem::setFileHidden(tmpFile.fileName(), true);
-
-        minio::s3::UploadObjectArgs uploadArgs;
-        uploadArgs.bucket = bucket;
-        uploadArgs.object = ".datetime-modified";
-        uploadArgs.filename = tmpFileName.toStdString();
-
-        minio::s3::UploadObjectResponse uploadResponse = client.UploadObject(uploadArgs);
-        if (uploadResponse) {
-            qCDebug(lcEtagJob) << uploadArgs.filename.c_str() << "is successfully uploaded to" << uploadArgs.object.c_str();
-        } else {
-            qCDebug(lcEtagJob) << "unable to upload file" << uploadArgs.filename.c_str() << "to" << uploadArgs.object.c_str();
-        }
-
-        tmpFile.remove();
-
-        return NULL;
-    }
-
-    minio::s3::DownloadObjectArgs downloadArgs;
-    downloadArgs.bucket = bucket;
-    downloadArgs.object = ".datetime-modified";
-    downloadArgs.filename = tmpFileName.toStdString();
-
-    minio::s3::DownloadObjectResponse downloadResponse = client.DownloadObject(downloadArgs);
-    if (downloadResponse) {
-        qCDebug(lcEtagJob) << downloadArgs.object.c_str() << "is successfully downloaded to" << downloadArgs.filename.c_str();
-    } else {
-        qCDebug(lcEtagJob) << "unable to download object" << downloadArgs.object.c_str() << "to" << downloadArgs.filename.c_str();
-
-        return NULL;
-    }
-
-    QFile tmpFile;
-    tmpFile.setFileName(tmpFileName);
-    if (!tmpFile.open(QIODevice::ReadOnly | QIODevice::Unbuffered)) {
-        qCWarning(lcEtagJob) << "could not open temporary file" << tmpFile.fileName();
-        return NULL;
-    }
-    datetimeModified = tmpFile.readAll().toStdString();
-
-    tmpFile.close();
-
-    return datetimeModified;
 }
 
 void RequestEtagJob::start() {
@@ -198,12 +106,22 @@ void RequestEtagJob::start() {
 
     qCDebug(lcEtagJob) << "prefix" << QString::fromStdString(prefix);
 
+    QUrl baseUrl;
+    QString subPath;
+    auto job = new MinioJob(_account, baseUrl, subPath, MinioJob::Depth::One, this);
     QMap<QString, QString> currentHttp200Properties;
     minio::s3::Item item;
 
     if (prefix.empty()) {
-        // we are tricky here, see getRootDatetimeModified method description
-        item.etag = RequestEtagJob::getRootDatetimeModified(bucket);
+        auto rlmDatetime = job->getBucketTag(bucket, "rlm_datetime");
+
+        if (rlmDatetime == "") {
+            qCDebug(lcEtagJob) << "etag not set for bucket" << QString::fromStdString(bucket) << "so we gonna set it to current datetime";
+            rlmDatetime = job->getOrUpdateAndGetRLMDatetime(bucket, prefix);
+            _etag = QString::fromStdString(rlmDatetime);
+        }
+
+        item.etag = rlmDatetime;
 
         emit RequestEtagJob::directoryListingIteratedS3(item, currentHttp200Properties);
         emit RequestEtagJob::finishedSignal({});
@@ -211,17 +129,7 @@ void RequestEtagJob::start() {
         return;
     }
 
-    minio::s3::StatObjectArgs statArgs;
-    statArgs.bucket = bucket;
-    statArgs.object = prefix;
-
-    minio::s3::StatObjectResponse statResponse = client.StatObject(statArgs);
-    if (statResponse) {
-        item.etag = statResponse.etag;
-    } else {
-        qCWarning(lcEtagJob) << "could not get stat for object in bucket" << QString::fromStdString(bucket) << "with prefix" << QString::fromStdString(prefix);
-        return;
-    }
+    item.etag = job->getOrUpdateAndGetRLMDatetime(bucket, prefix);
 
     emit RequestEtagJob::directoryListingIteratedS3(item, currentHttp200Properties);
     emit RequestEtagJob::finishedSignal({});
@@ -466,20 +374,313 @@ void PropfindJob::start()
     AbstractNetworkJob::start();
 }
 
+std::string MinioJob::getObjectTag(const std::string &bucket, const std::string &name, const std::string &key)
+{
+    auto creds = _account->credentials();
+
+    qCDebug(lcMinioJob) << "getting object tag";
+    qCDebug(lcMinioJob) << "user" << creds->user();
+    qCDebug(lcMinioJob) << "bucket" << QString::fromStdString(bucket);
+    qCDebug(lcMinioJob) << "object" << QString::fromStdString(name);
+    qCDebug(lcMinioJob) << "key" << QString::fromStdString(key);
+
+    minio::s3::BaseUrl base_url(_account->url().toString().toStdString());
+    minio::creds::StaticProvider provider(creds->user().toStdString(), creds->password().toStdString());
+    minio::s3::Client client(base_url, &provider);
+
+    minio::s3::GetObjectTagsArgs objectTagsArgs;
+    objectTagsArgs.bucket = bucket;
+    objectTagsArgs.object = name;
+
+    minio::s3::GetObjectTagsResponse objectTagResponse = client.GetObjectTags(objectTagsArgs);
+    if (!objectTagResponse) {
+        qCDebug(lcMinioJob) << "unable to get tag for ↑↑↑";
+        qCDebug(lcMinioJob) << QString::fromStdString(objectTagResponse.Error().String());
+        return "";
+    }
+
+    for (auto& [tagKey, tagValue] : objectTagResponse.tags) {
+        qCDebug(lcMinioJob) << "Tag: Key:" << QString::fromStdString(tagKey) << ", " << "Value:" << QString::fromStdString(tagValue);
+
+        if (key == tagKey) {
+            return tagValue;
+        }
+    }
+
+    return "";
+}
+
+std::string MinioJob::getBucketTag(const std::string &bucket, const std::string &key)
+{
+    auto creds = _account->credentials();
+
+    qCDebug(lcMinioJob) << "getting bucket tag";
+    qCDebug(lcMinioJob) << "user" << creds->user();
+    qCDebug(lcMinioJob) << "bucket" << QString::fromStdString(bucket);
+    qCDebug(lcMinioJob) << "key" << QString::fromStdString(key);
+
+    minio::s3::BaseUrl base_url(_account->url().toString().toStdString());
+    minio::creds::StaticProvider provider(creds->user().toStdString(), creds->password().toStdString());
+    minio::s3::Client client(base_url, &provider);
+
+    minio::s3::GetBucketTagsArgs bucketTagsArgs;
+    bucketTagsArgs.bucket = bucket;
+
+    minio::s3::GetBucketTagsResponse bucketTagResponse = client.GetBucketTags(bucketTagsArgs);
+    if (!bucketTagResponse) {
+        qCDebug(lcMinioJob) << "unable to get bucket tag for ↑↑↑";
+        qCDebug(lcMinioJob) << QString::fromStdString(bucketTagResponse.Error().String());
+        return "";
+    }
+
+    for (auto& [tagKey, tagValue] : bucketTagResponse.tags) {
+        qCDebug(lcMinioJob) << "Tag: Key:" << QString::fromStdString(tagKey) << ", " << "Value:" << QString::fromStdString(tagValue);
+
+        if (key == tagKey) {
+            return tagValue;
+        }
+    }
+
+    return "";
+}
+
+minio::s3::GetObjectTagsResponse MinioJob::setObjectTag(const std::string &bucket, const std::string &name, const std::string &key, const std::string &value, const bool createIfNoKey)
+{
+    auto creds = _account->credentials();
+
+    qCDebug(lcMinioJob) << "setting object tag";
+    qCDebug(lcMinioJob) << "user" << creds->user();
+    qCDebug(lcMinioJob) << "bucket" << QString::fromStdString(bucket);
+    qCDebug(lcMinioJob) << "object" << QString::fromStdString(name);
+    qCDebug(lcMinioJob) << "key" << QString::fromStdString(key);
+    qCDebug(lcMinioJob) << "value" << QString::fromStdString(value);
+
+    minio::s3::BaseUrl base_url(_account->url().toString().toStdString());
+    minio::creds::StaticProvider provider(creds->user().toStdString(), creds->password().toStdString());
+    minio::s3::Client client(base_url, &provider);
+
+    if (createIfNoKey) {
+        minio::s3::StatObjectArgs statObjectArgs;
+        statObjectArgs.bucket = bucket;
+        statObjectArgs.object = name;
+
+        minio::s3::StatObjectResponse statObjectResponse = client.StatObject(statObjectArgs);
+
+        if (!statObjectResponse) {
+            qCDebug(lcMinioJob) << "unable to get stat object" << QString::fromStdString(statObjectResponse.Error().String());
+            qCDebug(lcMinioJob) << "no object exists, we'll create one";
+
+            std::ifstream file;
+
+            minio::s3::PutObjectArgs putObjectArgs(file, 0, 0);
+            putObjectArgs.bucket = bucket;
+            putObjectArgs.object = name;
+
+            minio::s3::PutObjectResponse putObjectResponse = client.PutObject(putObjectArgs);
+            if (!putObjectResponse) {
+                qCDebug(lcMinioJob) << "unable create object or folder ↑↑↑";
+                qCDebug(lcMinioJob) << QString::fromStdString(putObjectResponse.Error().String());
+            }
+        }
+    }
+
+    minio::s3::SetObjectTagsArgs objectTagsArgs;
+    objectTagsArgs.bucket = bucket;
+    objectTagsArgs.object = name;
+    objectTagsArgs.tags[key] = value;
+
+    minio::s3::SetObjectTagsResponse objectTagResponse = client.SetObjectTags(objectTagsArgs);
+    if (!objectTagResponse) {
+        qCDebug(lcMinioJob) << "unable to set tag for ↑↑↑";
+        qCDebug(lcMinioJob) << QString::fromStdString(objectTagResponse.Error().String());
+    }
+
+    return objectTagResponse;
+}
+
+minio::s3::GetBucketTagsResponse MinioJob::setBucketTag(const std::string &bucket, const std::string &key, const std::string &value)
+{
+    auto creds = _account->credentials();
+    qCDebug(lcMinioJob) << "user" << creds->user();
+    qCDebug(lcMinioJob) << "bucket" << QString::fromStdString(bucket);
+    qCDebug(lcMinioJob) << "key" << QString::fromStdString(key);
+    qCDebug(lcMinioJob) << "value" << QString::fromStdString(value);
+
+    minio::s3::BaseUrl base_url(_account->url().toString().toStdString());
+    minio::creds::StaticProvider provider(creds->user().toStdString(), creds->password().toStdString());
+    minio::s3::Client client(base_url, &provider);
+
+    minio::s3::SetBucketTagsArgs bucketTagsArgs;
+    bucketTagsArgs.bucket = bucket;
+    bucketTagsArgs.tags[key] = value;
+
+    minio::s3::SetBucketTagsResponse bucketTagResponse = client.SetBucketTags(bucketTagsArgs);
+
+    return bucketTagResponse;
+}
+
+/**
+ * @brief MinioJob::getOrUpdateAndGetRLMDatetime
+ * Method gets current datetime and updates buckets or objects tag rlm_datetime
+ * Tag rlm_datetime represents objects or "folders" real last modification
+ * datetime. It updates objects up to the root node, including bucket.
+ *
+ * For example when folder1/folder2/file1.txt changes, then we set tag
+ * rlm_datetime for following objects:
+ * - folder1/folder2/file1.txt -> set tag {"rlm_datetime" = currentdatetime()}
+ * - folder1/folder2/          -> set tag {"rlm_datetime" = currentdatetime()}
+ * - folder1/                  -> set tag {"rlm_datetime" = currentdatetime()}
+ *
+ * With this "hack" clients can know when some "folder" was updated. It is
+ * something simillar owncloud, ocis and cern are doing with their
+ * implementation:
+ * https://www.reddit.com/r/owncloud/comments/141vty4/ocis_and_external_storage/jn84v00/
+ *
+ * Even though this now costs us additional requests to an s3 storage we
+ * blindly assume that somewhere in the future rlm_datetime or something
+ * simillar will be implemented in ceph, aws, ... internally.
+ *
+ * Also NOTE that "rlm_datetime" sometimes would not be the same as datetime
+ * of created object, since "rlm_datetime" was missing at the first place and
+ * was added "much later".
+ *
+ * @param bucket
+ * @param object name
+ * @return std::string
+ */
+std::string MinioJob::getOrUpdateAndGetRLMDatetime(const std::string &bucket, const std::string &name) {
+    auto currentTime = std::chrono::system_clock::now();
+    std::time_t currentTimeT = std::chrono::system_clock::to_time_t(currentTime);
+    std::tm* timeinfo = std::localtime(&currentTimeT);
+    std::ostringstream oss;
+    oss << std::put_time(timeinfo, "%Y:%m:%d %H:%M:%S");
+    std::string formattedTime = oss.str();
+
+    qCDebug(lcMinioJob) << "will try to get or update object tag with bucket" << QString::fromStdString(bucket) << "and name" << QString::fromStdString(name);
+
+    std::string rlmDatetime = getObjectTag(bucket, name, "rlm_datetime");
+
+    if (rlmDatetime != "") {
+        return rlmDatetime;
+    }
+
+    minio::s3::SetObjectTagsResponse setObjectTagsResponse = setObjectTag(bucket, name, "rlm_datetime", formattedTime, true);
+    if (setObjectTagsResponse) {
+        rlmDatetime = formattedTime;
+    }
+
+    QStringList __path = QString::fromStdString(name).split(QStringLiteral("/"));
+    qCDebug(lcMinioJob) << "doing path" << __path;
+
+    __path.pop_back();
+
+    qCDebug(lcMinioJob) << "path size after pop" << __path.size();
+
+    while (__path.size() > 0) {
+        QString tmpName = __path.join(QStringLiteral("/"));
+
+        std::string tmpRlmDatetime = getObjectTag(bucket, tmpName.toStdString(), "rlm_datetime");
+
+        if (tmpRlmDatetime == "") {
+            minio::s3::SetObjectTagsResponse setObjectTagsResponse = setObjectTag(bucket, tmpName.toStdString() + "/", "rlm_datetime", formattedTime, true);
+        }
+
+        __path.pop_back();
+    }
+
+    std::string bucketRLMDatetime = getObjectTag(bucket, name, "rlm_datetime");
+
+    if (bucketRLMDatetime == "") {
+        minio::s3::SetBucketTagsResponse setObjectBucketResponse = setBucketTag(bucket, "rlm_datetime", formattedTime);
+    }
+
+    return rlmDatetime;
+}
+
+/**
+ * @brief MinioJob::updateRLMDatetime
+ * Method tries to update rlm_datetime no all nodes, no matter what. This is
+ * used only when we upload the file.
+ *
+ * @param bucket
+ * @param name
+ * @return
+ */
+std::string MinioJob::updateRLMDatetime(const std::string &bucket, const std::string &name) {
+    auto currentTime = std::chrono::system_clock::now();
+    std::time_t currentTimeT = std::chrono::system_clock::to_time_t(currentTime);
+    std::tm* timeinfo = std::localtime(&currentTimeT);
+    std::ostringstream oss;
+    oss << std::put_time(timeinfo, "%Y:%m:%d %H:%M:%S");
+    std::string formattedTime = oss.str();
+
+    qCDebug(lcMinioJob) << "will try to update object tag with bucket" << QString::fromStdString(bucket) << "and name" << QString::fromStdString(name);
+
+    minio::s3::SetObjectTagsResponse setObjectTagsResponse = setObjectTag(bucket, name, "rlm_datetime", formattedTime, true);
+    if (!setObjectTagsResponse) {
+        return "";
+    }
+
+    QStringList __path = QString::fromStdString(name).split(QStringLiteral("/"));
+    qCDebug(lcMinioJob) << "doing path" << __path;
+
+    __path.pop_back();
+
+    qCDebug(lcMinioJob) << "path size after pop" << __path.size();
+
+    while (__path.size() > 0) {
+        QString tmpName = __path.join(QStringLiteral("/"));
+
+        minio::s3::SetObjectTagsResponse setObjectTagsResponse = setObjectTag(bucket, tmpName.toStdString() + "/", "rlm_datetime", formattedTime, true);
+        if (!setObjectTagsResponse) {
+            return "";
+        }
+
+        __path.pop_back();
+    }
+
+    minio::s3::SetBucketTagsResponse setObjectBucketResponse = setBucketTag(bucket, "rlm_datetime", formattedTime);
+    if (!setObjectBucketResponse) {
+        return "";
+    }
+
+    return formattedTime;
+}
+
+minio::s3::GetObjectTagsResponse MinioJob::getObjectTags(const std::string &bucket, const std::string &name)
+{
+    auto creds = _account->credentials();
+    qCDebug(lcMinioJob) << "user" << creds->user();
+    qCDebug(lcMinioJob) << "bucket" << QString::fromStdString(bucket);
+    qCDebug(lcMinioJob) << "object" << QString::fromStdString(name);
+
+    minio::s3::BaseUrl base_url(_account->url().toString().toStdString());
+    minio::creds::StaticProvider provider(creds->user().toStdString(), creds->password().toStdString());
+    minio::s3::Client client(base_url, &provider);
+
+    minio::s3::GetObjectTagsArgs objectTagsArgs;
+    objectTagsArgs.bucket = bucket;
+    objectTagsArgs.object = name;
+
+    minio::s3::GetObjectTagsResponse objectTagResponse = client.GetObjectTags(objectTagsArgs);
+
+    return objectTagResponse;
+}
+
 void MinioJob::start()
 {
     /*
      * if path == "/" -> list buckets
      * else list objects based on path
      */
-    std::cout << "doing path " << path().toStdString() << std::endl;
+    qCDebug(lcMinioJob) << "doing path" << path();
 
     QList<QString> bucketList;
     QStringList folders;
 
     auto creds = _account->credentials();
 
-    qCDebug(lcEtagJob) << "user" << creds->user();
+    qCDebug(lcMinioJob) << "user" << creds->user();
 
     minio::s3::BaseUrl base_url(_account->url().toString().toStdString());
     minio::creds::StaticProvider provider(creds->user().toStdString(), creds->password().toStdString());
@@ -489,7 +690,7 @@ void MinioJob::start()
         minio::s3::ListBucketsResponse resp = client.ListBuckets();
         if (!resp) {
             // todo: show error
-            qCWarning(lcEtagJob) << "unable to do bucket existence check" << resp.Error();
+            qCWarning(lcMinioJob) << "unable to do bucket existence check" << resp.Error();
         }
 
         for (const auto &bucket : resp.buckets) {
@@ -508,12 +709,17 @@ void MinioJob::start()
         bucket = __path[1].toStdString();
     }
 
-    qCDebug(lcEtagJob) << "first element" << __path[1];
-    qCDebug(lcEtagJob) << "path size" << __path.size();
+    qCDebug(lcMinioJob) << "first element" << __path[1];
+    qCDebug(lcMinioJob) << "path size" << __path.size();
+    qCDebug(lcMinioJob) << "doing bucket" << QString::fromStdString(bucket);
 
     if (__path.size() > 2) {
-        prefix = std::regex_replace(prefix, std::regex(bucket), "");
+        prefix = std::regex_replace(path().toStdString(), std::regex("^/" + bucket + "/"), "");
+        prefix = std::regex_replace(prefix, std::regex("^/" + bucket), "");
+        // prefix = std::regex_replace(prefix, std::regex("\\/\\/"), "");
     }
+
+    qCDebug(lcMinioJob) << "doing prefix" << QString::fromStdString(prefix);
 
     minio::s3::ListObjectsArgs args;
     args.bucket = bucket;
@@ -522,44 +728,57 @@ void MinioJob::start()
     args.max_keys = 1000000; // todo Rok Jaklic hard limit for now
 
     minio::s3::ListObjectsResult result = client.ListObjects(args);
+
     for (; result; result++) {
         minio::s3::Item item = *result;
         if (item) {
-            qCDebug(lcEtagJob) << "Name: " << QString::fromStdString(item.name);
-            qCDebug(lcEtagJob) << "Version ID: " << QString::fromStdString(item.version_id);
-            qCDebug(lcEtagJob) << "ETag: " << QString::fromStdString(item.etag);
-            qCDebug(lcEtagJob) << "Size: " << item.size;
-            qCDebug(lcEtagJob) << "Last Modified: " << item.last_modified.ToUTC();
-            qCDebug(lcEtagJob) << "Delete Marker: "
-                               << minio::utils::BoolToString(item.is_delete_marker);
+            qCDebug(lcMinioJob) << "------------------";
+            qCDebug(lcMinioJob) << "doing item";
+            qCDebug(lcMinioJob) << "Name: " << QString::fromStdString(item.name);
+            qCDebug(lcMinioJob) << "Version ID: " << QString::fromStdString(item.version_id);
+            qCDebug(lcMinioJob) << "Size: " << item.size;
+            qCDebug(lcMinioJob) << "Last Modified: " << item.last_modified.ToUTC();
+            qCDebug(lcMinioJob) << "Delete Marker: " << minio::utils::BoolToString(item.is_delete_marker);
 
-            qCDebug(lcEtagJob) << "User Metadata: ";
+            qCDebug(lcMinioJob) << "User Metadata: ";
             for (auto &[key, value] : item.user_metadata) {
-                qCDebug(lcEtagJob) << "  " << QString::fromStdString(key) << ": " << QString::fromStdString(value);
+                qCDebug(lcMinioJob) << "  " << QString::fromStdString(key) << ": " << QString::fromStdString(value);
             }
-            qCDebug(lcEtagJob) << "Owner ID: " << QString::fromStdString(item.owner_id);
-            qCDebug(lcEtagJob) << "Owner Name: " << QString::fromStdString(item.owner_name);
-            qCDebug(lcEtagJob) << "Storage Class: " << QString::fromStdString(item.storage_class);
-            qCDebug(lcEtagJob) << "Is Latest: " << minio::utils::BoolToString(item.is_latest);
-            qCDebug(lcEtagJob) << "Is Prefix: " << minio::utils::BoolToString(item.is_prefix);
-            qCDebug(lcEtagJob) << "---";
+            qCDebug(lcMinioJob) << "Owner ID: " << QString::fromStdString(item.owner_id);
+            qCDebug(lcMinioJob) << "Owner Name: " << QString::fromStdString(item.owner_name);
+            qCDebug(lcMinioJob) << "Storage Class: " << QString::fromStdString(item.storage_class);
+            qCDebug(lcMinioJob) << "Is Latest: " << minio::utils::BoolToString(item.is_latest);
+            qCDebug(lcMinioJob) << "Is Prefix: " << minio::utils::BoolToString(item.is_prefix);
+            qCDebug(lcMinioJob) << "bucket name" << QString::fromStdString(item.bucket_name);
+            qCDebug(lcMinioJob) << "object name" << QString::fromStdString(item.object_name);
 
             if (item.is_prefix && item.size == 0)  {
                 QString fullPath = QStringLiteral("/") + QString::fromStdString(bucket) + QStringLiteral("/") + QString::fromStdString(prefix) + QString::fromUtf8(item.name.c_str());
                 folders.append(fullPath);
             }
 
+            // Here is a little hack. etag is actually an objects tag rlm_datetime.
+            // Take a look into getOrUpdateAndGetRLMDatetime method description.
+            item.etag = getOrUpdateAndGetRLMDatetime(bucket, item.name);
+
+            item.name = "/" + bucket + "/" + item.name;
+            qCDebug(lcMinioJob) << "item.name = bucket + item.name";
+            qCDebug(lcMinioJob) << "item.name" << QString::fromStdString(item.name);
+
+            qCDebug(lcMinioJob) << "ETag: " << QString::fromStdString(item.etag);
+            qCDebug(lcMinioJob) << "------------------";
+
             QMap<QString, QString> currentHttp200Properties;
             emit directoryListingIteratedS3(item, currentHttp200Properties);
         } else {
-            qCWarning(lcEtagJob) << "unable to listobjects " << item.Error();
+            qCWarning(lcMinioJob) << "unable to listobjects" << item.Error();
             break;
         }
     }
 
     for (const auto& i : folders)
     {
-        qCDebug(lcEtagJob) << "folder " << i;
+        qCDebug(lcMinioJob) << "folder " << i;
         // emit directoryListingIterated(i, currentHttp200Properties);
     }    
 

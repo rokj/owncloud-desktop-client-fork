@@ -37,7 +37,15 @@ Q_LOGGING_CATEGORY(lcDisco, "sync.discovery", QtInfoMsg)
 
 void ProcessDirectoryJob::start()
 {
-    qCInfo(lcDisco) << "STARTING" << _currentFolder._server << _queryServer << _currentFolder._local << _queryLocal;
+    if (_currentFolder._server == QStringLiteral("tlenot")) {
+        qCWarning(lcDisco) << "we should not be here";
+    }
+
+    qCInfo(lcDisco) << "STARTING _currentFolder._server" << _currentFolder._server;
+    qCInfo(lcDisco) << "STARTING _queryServer" << _queryServer;
+    qCInfo(lcDisco) << "...";
+    qCInfo(lcDisco) << "STARTING _currentFolder._local" << _currentFolder._local;
+    qCInfo(lcDisco) << "STARTING _queryLocal" << _queryLocal;
 
     if (_queryServer == NormalQuery) {
         _serverJob = startAsyncServerQuery();
@@ -308,6 +316,10 @@ void ProcessDirectoryJob::processFile(const PathTuple &path,
     const LocalInfo &localEntry, const RemoteInfo &serverEntry,
     const SyncJournalFileRecord &dbEntry)
 {
+    if (localEntry.name == QStringLiteral("") && serverEntry.name == QStringLiteral("")) {
+        return;
+    }
+
     const char *hasServer = serverEntry.isValid() ? "true" : _queryServer == ParentNotChanged ? "db" : "false";
     const char *hasLocal = localEntry.isValid() ? "true" : _queryLocal == ParentNotChanged ? "db" : "false";
     qCInfo(lcDisco).nospace() << "Processing " << path._original
@@ -318,8 +330,10 @@ void ProcessDirectoryJob::processFile(const PathTuple &path,
                               << " | checksum: " << dbEntry._checksumHeader << "//" << serverEntry.checksumHeader
                               << " | perm: " << dbEntry._remotePerm << "//" << serverEntry.remotePerm
                               << " | fileid: " << dbEntry._fileId << "//" << serverEntry.fileId
-                              << " | inode: " << dbEntry._inode << "/" << localEntry.inode << "/"
-                              << " | type: " << dbEntry._type << "/" << localEntry.type << "/" << (serverEntry.isDirectory ? ItemTypeDirectory : ItemTypeFile);
+                              << " | inode: " << dbEntry._inode << "/" << localEntry.inode
+                              << " | dbEntry.type: " << dbEntry._type
+                              << " | localEntry.type: " << localEntry.type
+                              << " | serverEntry: " << (serverEntry.isDirectory ? ItemTypeDirectory : ItemTypeFile);
 
     if (_discoveryData->isRenamed(path._original)) {
         qCDebug(lcDisco) << "Ignoring renamed";
@@ -1403,8 +1417,26 @@ QString ProcessDirectoryJob::chopVirtualFileSuffix(const QString &str) const
 
 DiscoverySingleDirectoryJob *ProcessDirectoryJob::startAsyncServerQuery()
 {
+    /*
     auto serverJob = new DiscoverySingleDirectoryJob(_discoveryData->_account, _discoveryData->_baseUrl,
         _discoveryData->_remoteFolder + _currentFolder._server, this);
+    */
+
+    qCDebug(lcDisco) << "_discoveryData->_baseUrl" << _discoveryData->_baseUrl;
+    qCDebug(lcDisco) << "_discoveryData->_remoteFolder" << _discoveryData->_remoteFolder;
+    qCDebug(lcDisco) << "_currentFolder._server" << _currentFolder._server;
+
+    // todo Rok Jaklic this is ugly hack
+    QString remotePath = QLatin1String("");
+    if (_currentFolder._server == QLatin1String("")) {
+        remotePath = _discoveryData->_remoteFolder;
+    } else {
+        remotePath = _currentFolder._server;
+    }
+    qCDebug(lcDisco) << "remotePath" << remotePath;
+
+    auto serverJob = new DiscoverySingleDirectoryJob(_discoveryData->_account, _discoveryData->_baseUrl, remotePath, this);
+
     if (!_dirItem)
         serverJob->setIsRootPath(); // query the fingerprint on the root
     connect(serverJob, &DiscoverySingleDirectoryJob::etag, this, &ProcessDirectoryJob::etag);
