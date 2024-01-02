@@ -5,11 +5,11 @@
 The Stree Desktop Client is a tool to synchronize files from S3 endpoint
 with your computer. It is fork of https://github.com/owncloud/client/
 
-Work in progress.
+Work in progress. Not to be used in "production".
 
 ---- 
 
-Following if from owncloud ...
+Following from owncloud ...
 
 ### Source code
 
